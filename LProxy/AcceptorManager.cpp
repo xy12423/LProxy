@@ -56,21 +56,21 @@ void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, acc
 	incompleteAcceptors_.insert(item);
 
 	item->acceptor.reset(factory());
-	item->acceptor->async_open([item = std::move(item), ep](error_code err) {
+	item->acceptor->async_open([item, ep](error_code err) {
 		if (err)
 		{
 			AsyncPrepareError(item, err);
 			return;
 		}
 		item->acceptor->async_bind(ep,
-			[item = std::move(item), ep](error_code err)
+			[item, ep](error_code err)
 		{
 			if (err)
 			{
 				AsyncPrepareError(item, err);
 				return;
 			}
-			item->acceptor->async_listen([item = std::move(item), ep](error_code err)
+			item->acceptor->async_listen([item, ep](error_code err)
 			{
 				if (err)
 				{
@@ -108,8 +108,9 @@ size_t AcceptorManager::AsyncAccept(const endpoint &ep, prx_listener_base::accep
 			break;
 	if (itr != itrEnd)
 	{
-		ActivateAcceptor(itr.base());
-		return AsyncAcceptStart(itr->second, std::move(callback));
+		auto item = itr->second;
+		ActivateAcceptor(--(itr.base()));
+		return AsyncAcceptStart(item, std::move(callback));
 	}
 
 	callback(ERR_OPERATION_FAILURE, nullptr);
@@ -188,7 +189,7 @@ void AcceptorManager::CompleteAcceptor(const std::shared_ptr<AcceptorItemIncompl
 	}
 	newItem->acceptor = std::move(item->acceptor);
 
-	spareAcceptors_.emplace_back(item->requestEp, std::move(newItem));
+	spareAcceptors_.emplace_back(item->requestEp, newItem);
 	incompleteAcceptors_.erase(item);
 	CleanSpareAcceptors();
 

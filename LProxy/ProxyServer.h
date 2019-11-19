@@ -15,11 +15,11 @@ public:
 	void BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession> &&sessWeak);
 	void EndSession(ProxySession *sess);
 
-	virtual prx_listener_base* NewUpstreamAcceptor() = 0;
-	virtual prx_udp_socket_base* NewUpstreamUdpSocket() = 0;
-	virtual prx_tcp_socket_base* NewDownstreamTcpSocket() = 0;
-	virtual prx_listener_base* NewDownstreamAcceptor() = 0;
-	virtual prx_udp_socket_base* NewDownstreamUdpSocket() = 0;
+	virtual prx_listener_base *NewUpstreamAcceptor() = 0;
+	virtual prx_udp_socket_base *NewUpstreamUdpSocket() = 0;
+	virtual prx_tcp_socket_base *NewDownstreamTcpSocket() = 0;
+	virtual prx_listener_base *NewDownstreamAcceptor() = 0;
+	virtual prx_udp_socket_base *NewDownstreamUdpSocket() = 0;
 private:
 	void Accept();
 	void InitAcceptor();

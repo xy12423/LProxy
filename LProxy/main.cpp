@@ -32,12 +32,10 @@ int main(int argc, char *argv[])
 			config_items[arg.substr(0, pos)] = arg.substr(pos + 1);
 	}
 
-	/*
 	CryptoPP::SHA256 hasher;
 	CryptoPP::byte key_real[CryptoPP::SHA256::DIGESTSIZE];
 	hasher.CalculateDigest(key_real, (CryptoPP::byte*)(config_items.at("key").data()), config_items.at("key").size());
 	key.assign((const char*)key_real, sizeof(key_real));
-	*/
 
 	asio::io_context iosrv;
 	asio::executor_work_guard<asio::io_context::executor_type> iosrv_work = boost::asio::make_work_guard(iosrv);
