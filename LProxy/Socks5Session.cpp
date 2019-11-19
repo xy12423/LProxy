@@ -5,7 +5,7 @@
 
 static endpoint kEpZero(address(static_cast<uint32_t>(0)), 0);
 
-uint8_t methodSelector(int argc, const uint8_t* argv)
+static uint8_t methodSelector(int argc, const uint8_t* argv)
 {
 	for (const uint8_t *av_end = argv + argc; argv < av_end; argv++)
 	{
@@ -23,6 +23,10 @@ Socks5Session::Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket
 	:ProxySession(server), upTcp_(std::move(socket)),
 	upBuf_(std::make_unique<char[]>(kBufSize)), downBuf_(std::make_unique<char[]>(kBufSize))
 {
+	error_code err;
+	upTcp_->local_endpoint(AccessUpstreamEndpoint(), err);
+	if (err)
+		AccessUpstreamEndpoint() = endpoint();
 }
 
 Socks5Session::~Socks5Session()
@@ -150,15 +154,23 @@ void Socks5Session::ReceiveRequest()
 		{
 			if (err)
 				return;
+			AccessDownstreamEndpoint() = ep;
 			switch (cmd)
 			{
 			case CONNECT:
+				AccessTypeInfo() = "Socks5 Connect";
 				BeginConnect(ep);
 				break;
 			case BIND:
+				AccessTypeInfo() = "Socks5 Bind";
+				if (IsAdvancedProtocol())
+					AccessTypeInfo().append(" Advanced");
 				BeginBind(ep);
 				break;
 			case UDP_ASSOCIATE:
+				AccessTypeInfo() = "Socks5 Udp Associate";
+				if (IsAdvancedProtocol())
+					AccessTypeInfo().append(" Advanced");
 				BeginUdpAssociation(ep);
 				break;
 			}
@@ -215,7 +227,7 @@ void Socks5Session::BeginBind(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	endpoint downAcceptorRequestEp = (selectedMethod == 0x80 ? ep : kEpZero);
+	endpoint downAcceptorRequestEp = (IsAdvancedProtocol() ? ep : kEpZero);
 	AcceptorManager::AsyncPrepare(downAcceptorRequestEp,
 		[this]()->prx_listener_base* { return server_.NewDownstreamAcceptor(); },
 		[this, self = std::move(self), downAcceptorRequestEp](error_code err, const endpoint &acceptorLocalEp)
@@ -283,15 +295,10 @@ void Socks5Session::BeginUdpAssociation(const endpoint &ep)
 {
 	upUdp_.reset(server_.NewUpstreamUdpSocket());
 	downUdp_.reset(server_.NewDownstreamUdpSocket());
-	switch (selectedMethod)
-	{
-	case 0x80:
+	if (IsAdvancedProtocol())
 		BeginUdpAssociationWithBind(ep);
-		break;
-	default:
+	else
 		BeginUdpAssociationWithOpen(ep);
-		break;
-	}
 }
 
 void Socks5Session::BeginUdpAssociationWithOpen(const endpoint &ep)
@@ -376,16 +383,13 @@ void Socks5Session::EndUdpAssociation()
 	if (!err)
 		upUdpLocalEp.set_addr(upLocalEp.get_addr());
 
-	if (selectedMethod != 0x80)
-		if (replySent_.exchange(true))
-			return;
-	SendSocks5(0, upUdpLocalEp, [this, self = std::move(self)](error_code err)
+	if (IsAdvancedProtocol())
 	{
-		if (err)
-			return;
-
-		if (selectedMethod == 0x80)
+		SendSocks5(0, upUdpLocalEp, [this, self = std::move(self)](error_code err)
 		{
+			if (err)
+				return;
+
 			endpoint downUdpLocalEp;
 			downUdp_->local_endpoint(downUdpLocalEp, err);
 			if (err)
@@ -406,14 +410,22 @@ void Socks5Session::EndUdpAssociation()
 				RelayUpUdp();
 				RelayDownUdp();
 			});
-		}
-		else
+		});
+	}
+	else
+	{
+		if (replySent_.exchange(true))
+			return;
+		SendSocks5(0, upUdpLocalEp, [this, self = std::move(self)](error_code err)
 		{
+			if (err)
+				return;
+
 			ReadUpKeepalive();
 			RelayUpUdp();
 			RelayDownUdp();
-		}
-	});
+		});
+	}
 }
 
 void Socks5Session::EndWithError(error_code errCode)
@@ -613,7 +625,7 @@ void Socks5Session::RelayDownUdp()
 				Stop();
 			return;
 		}
-		if (upUdpRemoteEp_.get_port() == 0 && selectedMethod != 0x80)
+		if (upUdpRemoteEp_.get_port() == 0 && !IsAdvancedProtocol())
 		{
 			RelayDownUdp();
 			return;
@@ -806,4 +818,16 @@ void Socks5Session::RecvSocks5Body(const std::shared_ptr<std::array<char, 263>> 
 error_code Socks5Session::ParseUdp(const char *recv, size_t recvSize, endpoint &ep, const char *&dataStartAt, size_t &dataSize)
 {
 	return error_code();
+}
+
+bool Socks5Session::IsAdvancedProtocol()
+{
+	switch (selectedMethod)
+	{
+	case 0x00:
+		return false;
+	case 0x80:
+		return true;
+	}
+	return false;
 }

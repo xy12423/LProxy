@@ -19,8 +19,6 @@ public:
 
 	virtual void Start() override;
 	virtual void Stop() override;
-
-	virtual void PrintInfo(std::ostream &out) {}
 private:
 	void ReceiveHeader();
 	void ReceiveMethodRequested(const std::shared_ptr<std::array<char, 257>> &headerBuffer);
@@ -53,6 +51,8 @@ private:
 	void RecvSocks5Body(const std::shared_ptr<std::array<char, 263>> &resp_data, const std::shared_ptr<socksreq_callback> &callback);
 
 	static error_code ParseUdp(const char *recv, size_t recvSize, endpoint &ep, const char *&dataStartAt, size_t &dataSize);
+
+	bool IsAdvancedProtocol();
 
 	std::unique_ptr<prx_tcp_socket_base> upTcp_;
 	uint8_t selectedMethod = 0xFF;

@@ -249,8 +249,9 @@ void AcceptorManager::AsyncAcceptDo(const std::shared_ptr<AcceptorItem> &item)
 		std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 		if (item->callbacks.empty())
 			return;
-		item->callbacks.front().second(0, socket.release());
+		prx_listener_base::accept_callback callback = std::move(item->callbacks.front().second);
 		item->callbacks.pop_front();
+		callback(0, socket.release());
 		if (item->callbacks.empty())
 			RetireAcceptor(item);
 		else
