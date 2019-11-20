@@ -22,7 +22,7 @@ public:
 	virtual void Stop() override;
 private:
 	void ReceiveHeader();
-	void ReceiveMethodRequested(const std::shared_ptr<std::array<char, 257>> &headerBuffer);
+	void ReceiveMethodRequested();
 	void SendMethodSelected();
 
 	void ReceiveRequest();
@@ -37,22 +37,21 @@ private:
 	void EndUdpAssociation();
 	void EndWithError(error_code errCode);
 
+	void SendSocks5(uint8_t type, const endpoint &ep, null_callback &&complete_handler);
+	void RecvSocks5(socksreq_callback &&complete_handler);
+	void RecvSocks5Body(const std::shared_ptr<socksreq_callback> &callback);
+
 	void RelayUp();
 	void RelayDown();
-
 	void ReadUpWhileAccept();
-
 	void ReadUpKeepalive();
 	void RelayUpUdpOverTcp();
 	void RelayUpUdp();
 	void RelayDownUdp();
 
-	void SendSocks5(uint8_t type, const endpoint &ep, null_callback &&complete_handler);
-	void RecvSocks5(socksreq_callback &&complete_handler);
-	void RecvSocks5Body(const std::shared_ptr<std::array<char, 263>> &resp_data, const std::shared_ptr<socksreq_callback> &callback);
-
 	static error_code ParseUdp(const char *recv, size_t recvSize, endpoint &ep, const char *&dataStartAt, size_t &dataSize);
 
+	static uint8_t SelectMethod(int argc, const uint8_t* argv);
 	bool IsAdvancedProtocol();
 
 	std::unique_ptr<prx_tcp_socket_base> upTcp_;
