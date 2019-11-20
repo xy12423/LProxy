@@ -1,7 +1,6 @@
 #include "pch.h"
 #include "Socks5Session.h"
 #include "ProxyServer.h"
-#include "AcceptorManager.h"
 
 static endpoint kEpZero(address(static_cast<uint32_t>(0)), 0);
 
@@ -48,8 +47,7 @@ void Socks5Session::Stop()
 	if (stopping_.exchange(true))
 		return;
 
-	if (downAcceptorEp_.get_addr().get_type() != address::UNDEFINED)
-		AcceptorManager::CancelAccept(downAcceptorEp_, downAcceptorId_);
+	downAcceptorHandle_.CancelAccept();
 	error_code ec;
 	if (upTcp_)
 		upTcp_->close(ec);
@@ -228,7 +226,7 @@ void Socks5Session::BeginBind(const endpoint &ep)
 	auto self = shared_from_this();
 
 	endpoint downAcceptorRequestEp = (IsAdvancedProtocol() ? ep : kEpZero);
-	AcceptorManager::AsyncPrepare(downAcceptorRequestEp,
+	downAcceptorHandle_.AsyncPrepare(downAcceptorRequestEp,
 		[this]()->prx_listener_base* { return server_.NewDownstreamAcceptor(); },
 		[this, self = std::move(self), downAcceptorRequestEp](error_code err, const endpoint &acceptorLocalEp)
 	{
@@ -237,26 +235,23 @@ void Socks5Session::BeginBind(const endpoint &ep)
 			EndWithError(err);
 			return;
 		}
-		SendSocks5(0, acceptorLocalEp, [this, self = std::move(self), downAcceptorRequestEp](error_code err)
+		SendSocks5(0, acceptorLocalEp, [this, self = std::move(self)](error_code err)
 		{
 			if (err)
 				return;
 			ReadUpWhileAccept();
-			BeginBindAccept(downAcceptorRequestEp);
+			BeginBindAccept();
 		});
 	});
 }
 
-void Socks5Session::BeginBindAccept(const endpoint &ep)
+void Socks5Session::BeginBindAccept()
 {
 	auto self = shared_from_this();
 
-	downAcceptorEp_ = ep;
-	downAcceptorId_ = AcceptorManager::AsyncAccept(ep,
-		[this, self = std::move(self)](error_code err, prx_tcp_socket_base* socket)
+	downAcceptorHandle_.AsyncAccept([this, self = std::move(self)](error_code err, prx_tcp_socket_base* socket)
 	{
 		downTcp_.reset(socket);
-		downAcceptorEp_ = endpoint();
 		if (err)
 		{
 			EndWithError(err);

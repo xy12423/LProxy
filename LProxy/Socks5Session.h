@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProxySession.h"
+#include "AcceptorManager.h"
 
 class Socks5Session : public ProxySession
 {
@@ -28,7 +29,7 @@ private:
 	void BeginConnect(const endpoint &endpoint);
 	void EndConnect();
 	void BeginBind(const endpoint &endpoint);
-	void BeginBindAccept(const endpoint &endpoint);
+	void BeginBindAccept();
 	void EndBind();
 	void BeginUdpAssociation(const endpoint &endpoint);
 	void BeginUdpAssociationWithOpen(const endpoint &endpoint);
@@ -58,8 +59,7 @@ private:
 	uint8_t selectedMethod = 0xFF;
 
 	std::unique_ptr<prx_tcp_socket_base> downTcp_;
-	endpoint downAcceptorEp_;
-	size_t downAcceptorId_ = 0;
+	AcceptorHandle downAcceptorHandle_;
 	std::unique_ptr<prx_udp_socket_base> upUdp_, downUdp_;
 	endpoint upUdpRemoteEp_, upUdpFrom_, downUdpFrom_;
 

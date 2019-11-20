@@ -14,25 +14,29 @@ void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, acc
 	if (stopping_)
 		return;
 
-	//Try to find an existing acceptor first
+	//Try to find an existing spare acceptor first
 
-	auto itr = activeAcceptors_.rbegin(), itrEnd = activeAcceptors_.rend();
-	for (; itr != itrEnd; ++itr)
-		if (ep == itr->first)
+	auto itrSpare = spareAcceptors_.rbegin(), itrSpareEnd = spareAcceptors_.rend();
+	for (; itrSpare != itrSpareEnd; ++itrSpare)
+		if (ep == itrSpare->first)
 			break;
-	if (itr != itrEnd)
+	if (itrSpare != itrSpareEnd)
 	{
-		callback(0, itr->second->localEp);
+		std::shared_ptr<AcceptorItem> item = itrSpare->second;
+		ActivateAcceptor(--(itrSpare.base()));
+		callback(0, item->localEp);
 		return;
 	}
 
-	itr = spareAcceptors_.rbegin(), itrEnd = spareAcceptors_.rend();
-	for (; itr != itrEnd; ++itr)
-		if (ep == itr->first)
+	//No acceptor spare, see if there's one active
+
+	auto itrActive = activeAcceptors_.rbegin(), itrActiveEnd = activeAcceptors_.rend();
+	for (; itrActive != itrActiveEnd; ++itrActive)
+		if (ep == itrActive->first)
 			break;
-	if (itr != itrEnd)
+	if (itrActive != itrActiveEnd)
 	{
-		callback(0, itr->second->localEp);
+		itrActive->second->prepCallbacks.push_back(std::move(callback));
 		return;
 	}
 
@@ -85,39 +89,25 @@ void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, acc
 	});
 }
 
-size_t AcceptorManager::AsyncAccept(const endpoint &ep, prx_listener_base::accept_callback &&callback)
+void AcceptorManager::AsyncAccept(const endpoint &ep, prx_listener_base::accept_callback &&callback)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 	if (stopping_)
-		return 0;
+		return;
 
 	//Try to find the acceptor
 
-	auto itr = activeAcceptors_.rbegin(), itrEnd = activeAcceptors_.rend();
-	for (; itr != itrEnd; ++itr)
-		if (ep == itr->first)
+	auto itrActive = activeAcceptors_.rbegin(), itrActiveEnd = activeAcceptors_.rend();
+	for (; itrActive != itrActiveEnd; ++itrActive)
+		if (ep == itrActive->first)
 			break;
-	if (itr != itrEnd)
-	{
-		return AsyncAcceptStart(itr->second, std::move(callback));
-	}
-
-	itr = spareAcceptors_.rbegin(), itrEnd = spareAcceptors_.rend();
-	for (; itr != itrEnd; ++itr)
-		if (ep == itr->first)
-			break;
-	if (itr != itrEnd)
-	{
-		auto item = itr->second;
-		ActivateAcceptor(--(itr.base()));
-		return AsyncAcceptStart(item, std::move(callback));
-	}
+	if (itrActive != itrActiveEnd && !itrActive->second->callback)
+		return AsyncAcceptStart(itrActive->second, std::move(callback));
 
 	callback(ERR_OPERATION_FAILURE, nullptr);
-	return 0;
 }
 
-void AcceptorManager::CancelAccept(const endpoint &ep, size_t id)
+void AcceptorManager::CancelAccept(const endpoint &ep)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 	if (stopping_)
@@ -132,21 +122,14 @@ void AcceptorManager::CancelAccept(const endpoint &ep, size_t id)
 	if (itr == itrEnd)
 		return;
 
-	//Try to find the callback
+	//Cancel accept
 
-	auto &callbacks = itr->second->callbacks;
-	auto itrCallback = callbacks.begin(), itrCallbackEnd = callbacks.end();
-	for (; itrCallback != itrCallbackEnd; ++itrCallback)
+	if (itr->second->callback)
 	{
-		if (itrCallback->first == id)
-		{
-			itrCallback->second(ERR_OPERATION_FAILURE, nullptr);
-			callbacks.erase(itrCallback);
-			if (callbacks.empty())
-				RetireAcceptor(itr);
-			return;
-		}
+		(*itr->second->callback)(ERR_OPERATION_FAILURE, nullptr);
+		itr->second->callback.reset();
 	}
+	AsyncAcceptEnd(itr->second);
 }
 
 void AcceptorManager::Stop()
@@ -187,32 +170,31 @@ void AcceptorManager::CompleteAcceptor(const std::shared_ptr<AcceptorItemIncompl
 		AsyncPrepareError(item, err);
 		return;
 	}
+
+	newItem->prepCallbacks = std::move(item->callbacks);
 	newItem->acceptor = std::move(item->acceptor);
 
-	spareAcceptors_.emplace_back(item->requestEp, newItem);
+	activeAcceptors_.emplace_back(item->requestEp, newItem);
 	incompleteAcceptors_.erase(item);
-	CleanSpareAcceptors();
 
-	for (const auto &callback : item->callbacks)
-		callback(0, newItem->localEp);
+	newItem->prepCallbacks.front()(0, newItem->localEp);
+	newItem->prepCallbacks.pop_front();
 }
 
-size_t AcceptorManager::AsyncAcceptStart(const std::shared_ptr<AcceptorItem> &item, prx_listener_base::accept_callback &&callback)
+void AcceptorManager::AsyncAcceptStart(const std::shared_ptr<AcceptorItem> &item, prx_listener_base::accept_callback &&callback)
 {
-	bool stopped = item->callbacks.empty();
-	size_t nextId = item->nextId++;
-	item->callbacks.emplace_back(nextId, std::move(callback));
-	if (stopped)
-		AsyncAcceptDo(item);
-	return nextId;
+	item->callback = std::make_unique<prx_listener_base::accept_callback>(std::move(callback));
+	AsyncAcceptDo(item);
 }
 
 void AcceptorManager::AsyncAcceptError(const std::shared_ptr<AcceptorItem> &item, error_code err)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 
-	for (const auto &p : item->callbacks)
-		p.second(err, nullptr);
+	if (item->callback)
+		(*item->callback)(err, nullptr);
+	for (const auto &p : item->prepCallbacks)
+		p(err, emptyEndpoint);
 
 	auto itr = activeAcceptors_.begin(), itrEnd = activeAcceptors_.end();
 	for (; itr != itrEnd; ++itr)
@@ -247,16 +229,25 @@ void AcceptorManager::AsyncAcceptDo(const std::shared_ptr<AcceptorItem> &item)
 		}
 
 		std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
-		if (item->callbacks.empty())
+		if (!item->callback)
 			return;
-		prx_listener_base::accept_callback callback = std::move(item->callbacks.front().second);
-		item->callbacks.pop_front();
-		callback(0, socket.release());
-		if (item->callbacks.empty())
-			RetireAcceptor(item);
-		else
-			AsyncAcceptDo(item);
+		(*item->callback)(0, socket.release());
+		item->callback.reset();
+		AsyncAcceptEnd(item);
 	});
+}
+
+void AcceptorManager::AsyncAcceptEnd(const std::shared_ptr<AcceptorItem> &item)
+{
+	if (item->prepCallbacks.empty())
+	{
+		RetireAcceptor(item);
+	}
+	else
+	{
+		item->prepCallbacks.front()(0, item->localEp);
+		item->prepCallbacks.pop_front();
+	}
 }
 
 void AcceptorManager::ActivateAcceptor(const std::list<std::pair<endpoint, std::shared_ptr<AcceptorItem>>>::iterator &itr)
@@ -292,4 +283,44 @@ void AcceptorManager::CleanSpareAcceptors()
 		spareAcceptors_.front().second->acceptor->close(err);
 		spareAcceptors_.pop_front();
 	}
+}
+
+AcceptorHandle::~AcceptorHandle()
+{
+	if (ep_)
+		AcceptorManager::CancelAccept(*ep_);
+}
+
+void AcceptorHandle::AsyncPrepare(const endpoint &ep, AcceptorManager::accFactory &&factory, AcceptorManager::accPrepCallback &&callback)
+{
+	AcceptorManager::AsyncPrepare(ep, std::move(factory),
+		[this, ep, callback = std::move(callback)](error_code err, const endpoint &epLocal)
+	{
+		if (!err)
+			ep_ = std::make_unique<endpoint>(ep);
+		callback(err, epLocal);
+	});
+}
+
+void AcceptorHandle::AsyncAccept(prx_listener_base::accept_callback &&callback)
+{
+	if (!ep_)
+	{
+		callback(ERR_OPERATION_FAILURE, nullptr);
+		return;
+	}
+	AcceptorManager::AsyncAccept(*ep_,
+		[this, callback = std::move(callback)](error_code err, prx_tcp_socket_base *socket)
+	{
+		ep_.reset();
+		callback(err, socket);
+	});
+}
+
+void AcceptorHandle::CancelAccept()
+{
+	if (!ep_)
+		return;
+	AcceptorManager::CancelAccept(*ep_);
+	ep_.reset();
 }
