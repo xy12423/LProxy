@@ -167,6 +167,7 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="ProxyServer.h" />
     <ClInclude Include="ProxySession.h" />
+    <ClInclude Include="Socks4Session.h" />
     <ClInclude Include="Socks5Session.h" />
   </ItemGroup>
   <ItemGroup>
@@ -180,6 +181,7 @@
     </ClCompile>
     <ClCompile Include="ProxyServer.cpp" />
     <ClCompile Include="ProxySession.cpp" />
+    <ClCompile Include="Socks4Session.cpp" />
     <ClCompile Include="Socks5Session.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

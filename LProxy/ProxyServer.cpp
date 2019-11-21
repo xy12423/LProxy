@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "ProxyServer.h"
+#include "Socks4Session.h"
 #include "Socks5Session.h"
 #include "AcceptorManager.h"
 
@@ -74,7 +75,7 @@ void ProxyServer::Accept()
 			return;
 		}
 
-		auto session = std::make_shared<Socks5Session>(*this, std::move(socket));
+		auto session = std::make_shared<Socks4Session>(*this, std::move(socket));
 		session->Start();
 
 		Accept();

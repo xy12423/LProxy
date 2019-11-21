@@ -6,7 +6,7 @@ std::list<std::pair<endpoint, std::shared_ptr<AcceptorManager::AcceptorItem>>> A
 std::recursive_mutex AcceptorManager::acceptorsMutex_;
 std::atomic_bool AcceptorManager::stopping_ = false;
 
-static endpoint emptyEndpoint;
+static endpoint kEpEmpty, kEpZero((uint32_t)0, 0);
 
 void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, accPrepCallback &&callback)
 {
@@ -153,7 +153,7 @@ void AcceptorManager::AsyncPrepareError(const std::shared_ptr<AcceptorItemIncomp
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 
 	for (const auto &p : item->callbacks)
-		p(err, emptyEndpoint);
+		p(err, kEpEmpty);
 
 	item->acceptor->close(err);
 	incompleteAcceptors_.erase(item);
@@ -194,7 +194,7 @@ void AcceptorManager::AsyncAcceptError(const std::shared_ptr<AcceptorItem> &item
 	if (item->callback)
 		(*item->callback)(err, nullptr);
 	for (const auto &p : item->prepCallbacks)
-		p(err, emptyEndpoint);
+		p(err, kEpEmpty);
 
 	auto itr = activeAcceptors_.begin(), itrEnd = activeAcceptors_.end();
 	for (; itr != itrEnd; ++itr)
