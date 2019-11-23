@@ -33,8 +33,10 @@ private:
 	void EndBind(const endpoint &endpoint);
 	void EndWithError();
 
+	void ReceiveMore(null_callback &&complete_handler);
 	void SendResponse(uint8_t err, const endpoint &ep, null_callback &&complete_handler);
 
+	void RelayUpBuf();
 	void RelayUp();
 	void RelayDown();
 	void ReadUpWhileAccept();
@@ -44,6 +46,7 @@ private:
 
 	std::unique_ptr<prx_tcp_socket_base> downTcp_;
 	AcceptorHandle downAcceptorHandle_;
+
 	std::unique_ptr<char[]> upBuf_, downBuf_;
 	size_t upBufP_ = 0, upBufPEnd_ = 0;
 

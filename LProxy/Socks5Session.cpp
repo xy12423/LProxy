@@ -215,8 +215,8 @@ void Socks5Session::BeginBind(const endpoint &ep)
 				Stop();
 				return;
 			}
-			ReadUpWhileAccept();
 			BeginBindAccept();
+			ReadUpWhileAccept();
 		});
 	});
 }
