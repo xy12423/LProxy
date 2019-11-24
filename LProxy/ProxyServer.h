@@ -29,9 +29,9 @@ private:
 	std::unique_ptr<prx_listener_base> acceptor_;
 	endpoint acceptorLocalEp_;
 	boost::asio::steady_timer acceptorRetryTimer_;
-	std::atomic_bool acceptorRetrying_ = false;
+	std::atomic_bool acceptorRetrying_{ false };
 	std::unordered_map<ProxySession *, std::weak_ptr<ProxySession>> sessions_;
 	std::recursive_mutex sessionsMutex_, acceptorMutex_;
 
-	std::atomic_bool stopping_ = false;
+	std::atomic_bool stopping_{ false };
 };

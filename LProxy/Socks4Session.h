@@ -50,5 +50,5 @@ private:
 	std::unique_ptr<char[]> upBuf_, downBuf_;
 	size_t upBufP_ = 0, upBufPEnd_ = 0;
 
-	std::atomic_bool replySent_ = false, stopping_ = false;
+	std::atomic_bool replySent_{ false }, stopping_{ false };
 };

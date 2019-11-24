@@ -65,5 +65,5 @@ private:
 	std::unique_ptr<char[]> upBuf_, downBuf_, udpOverTcpBuf_;
 	char udpKeepAliveBuf_;
 
-	std::atomic_bool replySent_ = false, stopping_ = false;
+	std::atomic_bool replySent_{ false }, stopping_{ false };
 };

@@ -4,7 +4,7 @@
 std::unordered_set<std::shared_ptr<AcceptorManager::AcceptorItemIncomplete>> AcceptorManager::incompleteAcceptors_;
 std::list<std::pair<endpoint, std::shared_ptr<AcceptorManager::AcceptorItem>>> AcceptorManager::activeAcceptors_, AcceptorManager::spareAcceptors_;
 std::recursive_mutex AcceptorManager::acceptorsMutex_;
-std::atomic_bool AcceptorManager::stopping_ = false;
+std::atomic_bool AcceptorManager::stopping_(false);
 
 static endpoint kEpEmpty, kEpZero((uint32_t)0, 0);
 
