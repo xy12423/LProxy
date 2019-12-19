@@ -9,7 +9,7 @@ Socks5Session::Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket
 	upBuf_(std::make_unique<char[]>(kBufSize)), downBuf_(std::make_unique<char[]>(kBufSize))
 {
 	error_code err;
-	upTcp_->local_endpoint(AccessUpstreamEndpoint(), err);
+	upTcp_->remote_endpoint(AccessUpstreamEndpoint(), err);
 	if (err)
 		AccessUpstreamEndpoint() = endpoint();
 	AccessTypeInfo() = "Socks5";
