@@ -217,7 +217,7 @@ void Socks4Session::BeginBind(const endpoint &ep)
 	auto self = shared_from_this();
 
 	downAcceptorHandle_.AsyncPrepare(kEpZero,
-		[this]()->prx_listener_base* { return server_.NewDownstreamAcceptor(); },
+		[this]()->std::unique_ptr<prx_listener_base> { return std::unique_ptr<prx_listener_base>(server_.NewDownstreamAcceptor()); },
 		[this, self = std::move(self), ep](error_code err, const endpoint &acceptorLocalEp)
 	{
 		if (err)
@@ -242,9 +242,9 @@ void Socks4Session::BeginBindAccept(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	downAcceptorHandle_.AsyncAccept([this, self = std::move(self), ep](error_code err, prx_tcp_socket_base* socket)
+	downAcceptorHandle_.AsyncAccept([this, self = std::move(self), ep](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
 	{
-		downTcp_.reset(socket);
+		downTcp_ = std::move(socket);
 		if (err)
 		{
 			EndWithError();

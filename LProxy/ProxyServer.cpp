@@ -66,9 +66,8 @@ void ProxyServer::Accept()
 		InitAcceptor();
 		return;
 	}
-	acceptor_->async_accept([this](error_code err, prx_tcp_socket_base *socketPtr)
+	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
 	{
-		std::unique_ptr<prx_tcp_socket_base> socket(socketPtr);
 		if (err)
 		{
 			InitAcceptor();

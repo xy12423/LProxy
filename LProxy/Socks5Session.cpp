@@ -200,7 +200,7 @@ void Socks5Session::BeginBind(const endpoint &ep)
 
 	endpoint downAcceptorRequestEp = (IsAdvancedProtocol() ? ep : kEpZero);
 	downAcceptorHandle_.AsyncPrepare(downAcceptorRequestEp,
-		[this]()->prx_listener_base* { return server_.NewDownstreamAcceptor(); },
+		[this]()->std::unique_ptr<prx_listener_base> { return std::unique_ptr<prx_listener_base>(server_.NewDownstreamAcceptor()); },
 		[this, self = std::move(self), downAcceptorRequestEp](error_code err, const endpoint &acceptorLocalEp)
 	{
 		if (err)
@@ -225,9 +225,9 @@ void Socks5Session::BeginBindAccept()
 {
 	auto self = shared_from_this();
 
-	downAcceptorHandle_.AsyncAccept([this, self = std::move(self)](error_code err, prx_tcp_socket_base* socket)
+	downAcceptorHandle_.AsyncAccept([this, self = std::move(self)](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
 	{
-		downTcp_.reset(socket);
+		downTcp_ = std::move(socket);
 		if (err)
 		{
 			EndWithError(err);

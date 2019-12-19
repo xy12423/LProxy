@@ -8,7 +8,7 @@ std::atomic_bool AcceptorManager::stopping_(false);
 
 static endpoint kEpEmpty, kEpZero((uint32_t)0, 0);
 
-void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, accPrepCallback &&callback)
+void AcceptorManager::AsyncPrepare(const endpoint &ep, AcceptorFactory &&factory, AcceptorPreparationCallback &&callback)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 	if (stopping_)
@@ -59,7 +59,7 @@ void AcceptorManager::AsyncPrepare(const endpoint &ep, accFactory &&factory, acc
 	item->callbacks.push_back(std::move(callback));
 	incompleteAcceptors_.insert(item);
 
-	item->acceptor.reset(factory());
+	item->acceptor = factory();
 	item->acceptor->async_open([item, ep](error_code err) {
 		if (err)
 		{
@@ -219,9 +219,8 @@ void AcceptorManager::AsyncAcceptError(const std::shared_ptr<AcceptorItem> &item
 
 void AcceptorManager::AsyncAcceptDo(const std::shared_ptr<AcceptorItem> &item)
 {
-	item->acceptor->async_accept([item](error_code err, prx_tcp_socket_base *socketPtr)
+	item->acceptor->async_accept([item](error_code err, std::unique_ptr<prx_tcp_socket_base> socket)
 	{
-		std::unique_ptr<prx_tcp_socket_base> socket(socketPtr);
 		if (err)
 		{
 			AsyncAcceptError(item, err);
@@ -231,7 +230,7 @@ void AcceptorManager::AsyncAcceptDo(const std::shared_ptr<AcceptorItem> &item)
 		std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 		if (!item->callback)
 			return;
-		(*item->callback)(0, socket.release());
+		(*item->callback)(0, std::move(socket));
 		item->callback.reset();
 		AsyncAcceptEnd(item);
 	});
@@ -291,7 +290,7 @@ AcceptorHandle::~AcceptorHandle()
 		AcceptorManager::CancelAccept(*ep_);
 }
 
-void AcceptorHandle::AsyncPrepare(const endpoint &ep, AcceptorManager::accFactory &&factory, AcceptorManager::accPrepCallback &&callback)
+void AcceptorHandle::AsyncPrepare(const endpoint &ep, AcceptorManager::AcceptorFactory &&factory, AcceptorManager::AcceptorPreparationCallback &&callback)
 {
 	AcceptorManager::AsyncPrepare(ep, std::move(factory),
 		[this, ep, callback = std::move(callback)](error_code err, const endpoint &epLocal)
@@ -310,10 +309,10 @@ void AcceptorHandle::AsyncAccept(prx_listener_base::accept_callback &&callback)
 		return;
 	}
 	AcceptorManager::AsyncAccept(*ep_,
-		[this, callback = std::move(callback)](error_code err, prx_tcp_socket_base *socket)
+		[this, callback = std::move(callback)](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
 	{
 		ep_.reset();
-		callback(err, socket);
+		callback(err, std::move(socket));
 	});
 }
 

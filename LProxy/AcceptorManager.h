@@ -3,25 +3,25 @@
 class AcceptorManager
 {
 public:
-	typedef std::function<prx_listener_base*()> accFactory;
-	typedef std::function<void(error_code, const endpoint &)> accPrepCallback;
+	typedef std::function<std::unique_ptr<prx_listener_base>()> AcceptorFactory;
+	typedef std::function<void(error_code, const endpoint &)> AcceptorPreparationCallback;
 private:
 	struct AcceptorItemIncomplete
 	{
 		endpoint requestEp;
 		std::unique_ptr<prx_listener_base> acceptor;
-		std::list<accPrepCallback> callbacks;
+		std::list<AcceptorPreparationCallback> callbacks;
 	};
 
 	struct AcceptorItem
 	{
 		std::unique_ptr<prx_listener_base> acceptor;
 		endpoint localEp;
-		std::list<accPrepCallback> prepCallbacks;
+		std::list<AcceptorPreparationCallback> prepCallbacks;
 		std::unique_ptr<prx_listener_base::accept_callback> callback;
 	};
 public:
-	static void AsyncPrepare(const endpoint &endpoint, accFactory &&factory, accPrepCallback &&callback);
+	static void AsyncPrepare(const endpoint &endpoint, AcceptorFactory &&factory, AcceptorPreparationCallback &&callback);
 	static void AsyncAccept(const endpoint &endpoint, prx_listener_base::accept_callback &&callback);
 	static void CancelAccept(const endpoint &endpoint);
 
@@ -49,7 +49,7 @@ class AcceptorHandle
 public:
 	~AcceptorHandle();
 
-	void AsyncPrepare(const endpoint &endpoint, AcceptorManager::accFactory &&factory, AcceptorManager::accPrepCallback &&callback);
+	void AsyncPrepare(const endpoint &endpoint, AcceptorManager::AcceptorFactory &&factory, AcceptorManager::AcceptorPreparationCallback &&callback);
 	void AsyncAccept(prx_listener_base::accept_callback &&callback);
 	void CancelAccept();
 private:
