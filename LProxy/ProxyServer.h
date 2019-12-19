@@ -7,13 +7,15 @@ class ProxyServer
 	//Service management
 public:
 	ProxyServer(asio::io_context &ioContext, const endpoint &acceptorLocalEp);
-	~ProxyServer();
+	virtual ~ProxyServer();
 
 	void Start();
 	void Stop();
 
 	void BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession> &&sessWeak);
 	void EndSession(ProxySession *sess);
+
+	void PrintSessions();
 
 	virtual prx_listener_base *NewUpstreamAcceptor() = 0;
 	virtual prx_udp_socket_base *NewUpstreamUdpSocket() = 0;

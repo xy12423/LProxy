@@ -4,6 +4,29 @@
 
 std::string key;
 
+void ltrim(std::string& str)
+{
+	if (str.empty())
+		return;
+	const char *itr = str.data(), *itrBegin = itr, *itrEnd = str.data() + str.size();
+	for (; itr != itrEnd; ++itr)
+		if (!isspace((uint8_t)*itr))
+			break;
+	str.erase(0, itr - itrBegin);
+}
+
+void rtrim(std::string& str)
+{
+	while (!str.empty() && isspace((uint8_t)str.back()))
+		str.pop_back();
+}
+
+void trim(std::string& str)
+{
+	ltrim(str);
+	rtrim(str);
+}
+
 class EntranceServer : public ProxyServer
 {
 public:
@@ -95,58 +118,66 @@ int main(int argc, char *argv[])
 	std::thread th([&iosrv, &iosrv_work]() { while (iosrv_work.owns_work()) { try { iosrv.run(); } catch (std::exception &ex) { std::cerr << ex.what() << std::endl; } catch (...) {} }});
 	th.detach();
 
+	std::unique_ptr<ProxyServer> server;
 	if (config_items.count("client") > 0)
 	{
-		EntranceServer server(
+		server = std::make_unique<EntranceServer>(
 			iosrv,
 			endpoint(0x7F000001, (port_type)std::stoi(config_items.at("client_port"))),
 			endpoint(config_items.at("server_addr"), (port_type)std::stoi(config_items.at("server_port")))
 			);
-		server.Start();
-
-		std::cin.get();
-
-		server.Stop();
+		server->Start();
 	}
 	else if (config_items.count("server") > 0)
 	{
-		ExitServer server(
+		server = std::make_unique<ExitServer>(
 			iosrv,
 			endpoint(0ul, (port_type)std::stoi(config_items.at("server_port")))
 		);
-		server.Start();
-
-		std::cin.get();
-
-		server.Stop();
 	}
 	else if (config_items.count("test") > 0)
 	{
-		RawServer server(
+		server = std::make_unique<RawServer>(
 			iosrv,
 			endpoint(0ul, (port_type)std::stoi(config_items.at("server_port")))
 		);
-		server.Start();
-
-		std::cin.get();
-
-		server.Stop();
 	}
 	else if (config_items.count("reverse") > 0)
 	{
-		ReverseExitServer server(
+		server = std::make_unique<ReverseExitServer>(
 			iosrv,
 			endpoint(endpoint(0ul, (port_type)std::stoi(config_items.at("client_port")))),
 			endpoint(config_items.at("server_addr"), (port_type)std::stoi(config_items.at("server_port"))),
 			key
 		);
-		server.Start();
+	}
+	server->Start();
 
-		std::cin.get();
+	std::string cmd, arg;
+	while (true)
+	{
+		std::getline(std::cin, cmd);
+		arg.clear();
 
-		server.Stop();
+		trim(cmd);
+		size_t pos = cmd.find(' ');
+		if (pos != cmd.npos)
+		{
+			arg.assign(cmd, pos + 1);
+			cmd.erase(pos);
+		}
+
+		if (cmd == "exit")
+		{
+			break;
+		}
+		else if (cmd == "list")
+		{
+			server->PrintSessions();
+		}
 	}
 
+	server->Stop();
 	AcceptorManager::Stop();
 	iosrv_work.reset();
 	while (!iosrv.stopped());

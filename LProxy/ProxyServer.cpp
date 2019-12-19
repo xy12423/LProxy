@@ -55,6 +55,15 @@ void ProxyServer::EndSession(ProxySession *sess)
 	sessions_.erase(sess);
 }
 
+void ProxyServer::PrintSessions()
+{
+	std::lock_guard<std::recursive_mutex> lock(sessionsMutex_);
+
+	for (const auto &weakSession : sessions_)
+		if (auto session = weakSession.second.lock())
+			std::cout << session->TypeInfo() << '\t' << session->UpstreamEndpoint().get_addr().to_string() << ':' << session->UpstreamEndpoint().get_port() << '\t' << session->DownstreamEndpoint().get_addr().to_string() << ':' << session->DownstreamEndpoint().get_port() << std::endl;
+}
+
 void ProxyServer::Accept()
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
