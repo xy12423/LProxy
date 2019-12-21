@@ -4,7 +4,7 @@
 
 static endpoint kEpZero((uint32_t)0, 0);
 
-Socks5Session::Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket_base> &&socket)
+Socks5Session::Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket)
 	:ProxySession(server), upTcp_(std::move(socket)),
 	upBuf_(std::make_unique<char[]>(kBufSize)), downBuf_(std::make_unique<char[]>(kBufSize))
 {
@@ -200,7 +200,7 @@ void Socks5Session::BeginBind(const endpoint &ep)
 
 	endpoint downAcceptorRequestEp = (IsAdvancedProtocol() ? ep : kEpZero);
 	downAcceptorHandle_.AsyncPrepare(downAcceptorRequestEp,
-		[this]()->std::unique_ptr<prx_listener_base> { return std::unique_ptr<prx_listener_base>(server_.NewDownstreamAcceptor()); },
+		[this]()->std::unique_ptr<prx_listener> { return std::unique_ptr<prx_listener>(server_.NewDownstreamAcceptor()); },
 		[this, self = std::move(self), downAcceptorRequestEp](error_code err, const endpoint &acceptorLocalEp)
 	{
 		if (err)
@@ -225,7 +225,7 @@ void Socks5Session::BeginBindAccept()
 {
 	auto self = shared_from_this();
 
-	downAcceptorHandle_.AsyncAccept([this, self = std::move(self)](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
+	downAcceptorHandle_.AsyncAccept([this, self = std::move(self)](error_code err, std::unique_ptr<prx_tcp_socket> &&socket)
 	{
 		downTcp_ = std::move(socket);
 		if (err)
@@ -279,17 +279,17 @@ void Socks5Session::BeginUdpAssociationWithOpen(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	if (ep.get_port() != 0)
+	if (ep.port() != 0)
 	{
-		if (ep.get_addr().is_any())
+		if (ep.addr().is_any())
 		{
 			endpoint upRemoteEp;
 			error_code err;
 			upTcp_->remote_endpoint(upRemoteEp, err);
 			if (!err)
 			{
-				upUdpRemoteEp_.set_addr(upRemoteEp.get_addr());
-				upUdpRemoteEp_.set_port(ep.get_port());
+				upUdpRemoteEp_.set_addr(upRemoteEp.addr());
+				upUdpRemoteEp_.set_port(ep.port());
 			}
 		}
 		else
@@ -355,7 +355,7 @@ void Socks5Session::EndUdpAssociation()
 	endpoint upLocalEp;
 	upTcp_->local_endpoint(upLocalEp, err);
 	if (!err)
-		upUdpLocalEp.set_addr(upLocalEp.get_addr());
+		upUdpLocalEp.set_addr(upLocalEp.addr());
 
 	if (IsAdvancedProtocol())
 	{
@@ -436,9 +436,9 @@ void Socks5Session::SendSocks5(uint8_t type, const endpoint &ep, null_callback &
 		buf->push_back(kSocksVersion);  //VER
 		buf->push_back(type);           //CMD / REP
 		buf->push_back(0);              //RSV
-		ep.get_addr().to_socks5(*buf);  //ATYP && DST.ADDR
-		buf->push_back(ep.get_port() >> 8);	//DST.PORT
-		buf->push_back(ep.get_port() & 0xFF);
+		ep.addr().to_socks5(*buf);  //ATYP && DST.ADDR
+		buf->push_back(ep.port() >> 8);	//DST.PORT
+		buf->push_back(ep.port() & 0xFF);
 
 		async_write(*upTcp_, const_buffer(*buf),
 			[this, buf, callback](error_code err)
@@ -697,7 +697,7 @@ void Socks5Session::RelayUpUdp()
 				Stop();
 			return;
 		}
-		if (upUdpRemoteEp_.get_port() == 0)
+		if (upUdpRemoteEp_.port() == 0)
 			upUdpRemoteEp_ = upUdpFrom_;
 
 		endpoint dst;
@@ -738,7 +738,7 @@ void Socks5Session::RelayDownUdp()
 				Stop();
 			return;
 		}
-		if (upUdpRemoteEp_.get_port() == 0 && !IsAdvancedProtocol())
+		if (upUdpRemoteEp_.port() == 0 && !IsAdvancedProtocol())
 		{
 			RelayDownUdp();
 			return;
@@ -747,13 +747,13 @@ void Socks5Session::RelayDownUdp()
 		std::shared_ptr<std::string> buf = std::make_shared<std::string>();
 		try
 		{
-			buf->append(3, '\0');                           //RSV && FRAG
-			downUdpFrom_.get_addr().to_socks5(*buf);        //ATYP && DST.ADDR
-			buf->push_back(downUdpFrom_.get_port() >> 8);   //DST.PORT
-			buf->push_back(downUdpFrom_.get_port() & 0xFF);
+			buf->append(3, '\0');                       //RSV && FRAG
+			downUdpFrom_.addr().to_socks5(*buf);        //ATYP && DST.ADDR
+			buf->push_back(downUdpFrom_.port() >> 8);   //DST.PORT
+			buf->push_back(downUdpFrom_.port() & 0xFF);
 			buf->append(downBuf_.get(), transferred);
 
-			if (upUdpRemoteEp_.get_port() != 0)
+			if (upUdpRemoteEp_.port() != 0)
 			{
 				upUdp_->async_send_to(upUdpRemoteEp_, const_buffer(*buf),
 					[this, self, buf](error_code err)

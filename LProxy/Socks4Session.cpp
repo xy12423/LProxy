@@ -4,7 +4,7 @@
 
 static endpoint kEpZero((uint32_t)0, 0);
 
-Socks4Session::Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket_base> &&socket)
+Socks4Session::Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket)
 	:ProxySession(server), upTcp_(std::move(socket)),
 	upBuf_(std::make_unique<char[]>(kBufSize)), downBuf_(std::make_unique<char[]>(kBufSize))
 {
@@ -217,7 +217,7 @@ void Socks4Session::BeginBind(const endpoint &ep)
 	auto self = shared_from_this();
 
 	downAcceptorHandle_.AsyncPrepare(kEpZero,
-		[this]()->std::unique_ptr<prx_listener_base> { return std::unique_ptr<prx_listener_base>(server_.NewDownstreamAcceptor()); },
+		[this]()->std::unique_ptr<prx_listener> { return std::unique_ptr<prx_listener>(server_.NewDownstreamAcceptor()); },
 		[this, self = std::move(self), ep](error_code err, const endpoint &acceptorLocalEp)
 	{
 		if (err)
@@ -242,7 +242,7 @@ void Socks4Session::BeginBindAccept(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	downAcceptorHandle_.AsyncAccept([this, self = std::move(self), ep](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
+	downAcceptorHandle_.AsyncAccept([this, self = std::move(self), ep](error_code err, std::unique_ptr<prx_tcp_socket> &&socket)
 	{
 		downTcp_ = std::move(socket);
 		if (err)
@@ -267,7 +267,7 @@ void Socks4Session::EndBind(const endpoint &ep)
 		EndWithError();
 		return;
 	}
-	if (downRemoteEp.get_addr() != ep.get_addr())
+	if (downRemoteEp.addr() != ep.addr())
 	{
 		EndWithError();
 		return;
@@ -334,11 +334,11 @@ void Socks4Session::SendResponse(uint8_t err, const endpoint &ep, null_callback 
 		std::shared_ptr<std::string> buf = std::make_shared<std::string>();
 		buf->push_back(kReplyVersion);  //VER
 		buf->push_back(err);            //REP
-		buf->push_back(ep.get_port() >> 8);	//DSTPORT
-		buf->push_back(ep.get_port() & 0xFF);
-		if (ep.get_addr().get_type() != address::V4)
+		buf->push_back(ep.port() >> 8);	//DSTPORT
+		buf->push_back(ep.port() & 0xFF);
+		if (ep.addr().type() != address::V4)
 			throw(socks5_error(ERR_BAD_ARG_LOCAL));
-		buf->append(ep.get_addr().v4().data(), address_v4::addr_size);  //DSTADDR
+		buf->append(ep.addr().v4().data(), address_v4::addr_size);  //DSTADDR
 
 		async_write(*upTcp_, const_buffer(*buf),
 			[this, buf, callback](error_code err)

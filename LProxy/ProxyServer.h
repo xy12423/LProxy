@@ -17,18 +17,18 @@ public:
 
 	void PrintSessions();
 
-	virtual prx_listener_base *NewUpstreamAcceptor() = 0;
-	virtual prx_udp_socket_base *NewUpstreamUdpSocket() = 0;
-	virtual prx_tcp_socket_base *NewDownstreamTcpSocket() = 0;
-	virtual prx_listener_base *NewDownstreamAcceptor() = 0;
-	virtual prx_udp_socket_base *NewDownstreamUdpSocket() = 0;
+	virtual prx_listener *NewUpstreamAcceptor() = 0;
+	virtual prx_udp_socket *NewUpstreamUdpSocket() = 0;
+	virtual prx_tcp_socket *NewDownstreamTcpSocket() = 0;
+	virtual prx_listener *NewDownstreamAcceptor() = 0;
+	virtual prx_udp_socket *NewDownstreamUdpSocket() = 0;
 private:
 	void Accept();
 	void InitAcceptor();
 	void InitAcceptorFailed();
 
 	asio::io_context &ioContext_;
-	std::unique_ptr<prx_listener_base> acceptor_;
+	std::unique_ptr<prx_listener> acceptor_;
 	endpoint acceptorLocalEp_;
 	boost::asio::steady_timer acceptorRetryTimer_;
 	std::atomic_bool acceptorRetrying_{ false };

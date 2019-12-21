@@ -89,7 +89,7 @@ void AcceptorManager::AsyncPrepare(const endpoint &ep, AcceptorFactory &&factory
 	});
 }
 
-void AcceptorManager::AsyncAccept(const endpoint &ep, prx_listener_base::accept_callback &&callback)
+void AcceptorManager::AsyncAccept(const endpoint &ep, prx_listener::accept_callback &&callback)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorsMutex_);
 	if (stopping_)
@@ -181,9 +181,9 @@ void AcceptorManager::CompleteAcceptor(const std::shared_ptr<AcceptorItemIncompl
 	newItem->prepCallbacks.pop_front();
 }
 
-void AcceptorManager::AsyncAcceptStart(const std::shared_ptr<AcceptorItem> &item, prx_listener_base::accept_callback &&callback)
+void AcceptorManager::AsyncAcceptStart(const std::shared_ptr<AcceptorItem> &item, prx_listener::accept_callback &&callback)
 {
-	item->callback = std::make_unique<prx_listener_base::accept_callback>(std::move(callback));
+	item->callback = std::make_unique<prx_listener::accept_callback>(std::move(callback));
 	AsyncAcceptDo(item);
 }
 
@@ -219,7 +219,7 @@ void AcceptorManager::AsyncAcceptError(const std::shared_ptr<AcceptorItem> &item
 
 void AcceptorManager::AsyncAcceptDo(const std::shared_ptr<AcceptorItem> &item)
 {
-	item->acceptor->async_accept([item](error_code err, std::unique_ptr<prx_tcp_socket_base> socket)
+	item->acceptor->async_accept([item](error_code err, std::unique_ptr<prx_tcp_socket> socket)
 	{
 		if (err)
 		{
@@ -301,7 +301,7 @@ void AcceptorHandle::AsyncPrepare(const endpoint &ep, AcceptorManager::AcceptorF
 	});
 }
 
-void AcceptorHandle::AsyncAccept(prx_listener_base::accept_callback &&callback)
+void AcceptorHandle::AsyncAccept(prx_listener::accept_callback &&callback)
 {
 	if (!ep_)
 	{
@@ -309,7 +309,7 @@ void AcceptorHandle::AsyncAccept(prx_listener_base::accept_callback &&callback)
 		return;
 	}
 	AcceptorManager::AsyncAccept(*ep_,
-		[this, callback = std::move(callback)](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
+		[this, callback = std::move(callback)](error_code err, std::unique_ptr<prx_tcp_socket> &&socket)
 	{
 		ep_.reset();
 		callback(err, std::move(socket));

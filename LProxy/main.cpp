@@ -32,11 +32,11 @@ class EntranceServer : public ProxyServer
 public:
 	EntranceServer(asio::io_context &ioCtx, const endpoint &ep, const endpoint &exitEp) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx), exitServerEp(exitEp) {}
 
-	virtual prx_listener_base* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket_base* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket_base* NewDownstreamTcpSocket() { return new socks5_tcp_socket(exitServerEp, std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
-	virtual prx_listener_base* NewDownstreamAcceptor() { return new socks5_listener(exitServerEp, [this]() { return std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key); }); }
-	virtual prx_udp_socket_base* NewDownstreamUdpSocket() { return new socks5_udp_socket(exitServerEp, std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
+	virtual prx_listener* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
+	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new socks5_tcp_socket(exitServerEp, std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
+	virtual prx_listener* NewDownstreamAcceptor() { return new socks5_listener(exitServerEp, [this]() { return std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key); }); }
+	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new socks5_udp_socket(exitServerEp, std::make_unique<websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
 private:
 	asio::io_context &ioCtx_;
 	endpoint exitServerEp;
@@ -47,11 +47,11 @@ class ExitServer : public ProxyServer
 public:
 	ExitServer(asio::io_context &ioCtx, const endpoint &ep) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx) {}
 
-	virtual prx_listener_base* NewUpstreamAcceptor() { return new websock_listener(std::make_unique<raw_listener>(ioCtx_), key); }
-	virtual prx_udp_socket_base* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket_base* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener_base* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket_base* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_listener* NewUpstreamAcceptor() { return new websock_listener(std::make_unique<raw_listener>(ioCtx_), key); }
+	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
+	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
+	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
 private:
 	asio::io_context &ioCtx_;
 };
@@ -61,7 +61,7 @@ class ReverseExitServer : public ProxyServer
 public:
 	ReverseExitServer(asio::io_context &ioCtx, const endpoint &ep, const endpoint &remoteEp, const std::string &remoteKey) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx), remoteEp_(remoteEp), remoteKey_(remoteKey) {}
 
-	virtual prx_listener_base* NewUpstreamAcceptor() {
+	virtual prx_listener* NewUpstreamAcceptor() {
 		return new websock_listener(
 			std::make_unique<socks5_listener>(
 				remoteEp_,
@@ -70,10 +70,10 @@ public:
 			key
 		);
 	}
-	virtual prx_udp_socket_base* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket_base* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener_base* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket_base* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
+	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
+	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
 private:
 	asio::io_context &ioCtx_;
 	endpoint remoteEp_;
@@ -85,11 +85,11 @@ class RawServer : public ProxyServer
 public:
 	RawServer(asio::io_context &ioCtx, const endpoint &ep) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx) {}
 
-	virtual prx_listener_base* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket_base* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket_base* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener_base* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket_base* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_listener* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
+	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
+	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
+	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
 private:
 	asio::io_context &ioCtx_;
 };

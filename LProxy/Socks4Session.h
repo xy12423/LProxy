@@ -15,7 +15,7 @@ class Socks4Session : public ProxySession
 		BIND = 2
 	};
 public:
-	Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket_base> &&socket);
+	Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket);
 	virtual ~Socks4Session();
 
 	virtual void Start() override;
@@ -41,10 +41,10 @@ private:
 	void RelayDown();
 	void ReadUpWhileAccept();
 
-	std::unique_ptr<prx_tcp_socket_base> upTcp_;
+	std::unique_ptr<prx_tcp_socket> upTcp_;
 	std::string username_;
 
-	std::unique_ptr<prx_tcp_socket_base> downTcp_;
+	std::unique_ptr<prx_tcp_socket> downTcp_;
 	AcceptorHandle downAcceptorHandle_;
 
 	std::unique_ptr<char[]> upBuf_, downBuf_;

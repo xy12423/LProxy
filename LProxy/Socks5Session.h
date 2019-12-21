@@ -15,7 +15,7 @@ class Socks5Session : public ProxySession
 		UDP_ASSOCIATE = 3
 	};
 public:
-	Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket_base> &&socket);
+	Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket);
 	virtual ~Socks5Session();
 
 	virtual void Start() override;
@@ -54,12 +54,12 @@ private:
 	static uint8_t SelectMethod(int argc, const uint8_t* argv);
 	bool IsAdvancedProtocol();
 
-	std::unique_ptr<prx_tcp_socket_base> upTcp_;
+	std::unique_ptr<prx_tcp_socket> upTcp_;
 	uint8_t selectedMethod = 0xFF;
 
-	std::unique_ptr<prx_tcp_socket_base> downTcp_;
+	std::unique_ptr<prx_tcp_socket> downTcp_;
 	AcceptorHandle downAcceptorHandle_;
-	std::unique_ptr<prx_udp_socket_base> upUdp_, downUdp_;
+	std::unique_ptr<prx_udp_socket> upUdp_, downUdp_;
 	endpoint upUdpRemoteEp_, upUdpFrom_, downUdpFrom_;
 
 	std::unique_ptr<char[]> upBuf_, downBuf_, udpOverTcpBuf_;

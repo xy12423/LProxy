@@ -36,7 +36,7 @@
 #include <boost/asio.hpp>
 
 #include <libprxsocket/socket_raw.h>
-#include <libprxsocket/socks5_base.h>
+#include <libprxsocket/socket_http.h>
 #include <libprxsocket/socket_socks5.h>
 #include <libprxsocket/socket_websock.h>
 

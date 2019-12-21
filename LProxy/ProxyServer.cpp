@@ -61,7 +61,7 @@ void ProxyServer::PrintSessions()
 
 	for (const auto &weakSession : sessions_)
 		if (auto session = weakSession.second.lock())
-			std::cout << session->TypeInfo() << '\t' << session->UpstreamEndpoint().get_addr().to_string() << ':' << session->UpstreamEndpoint().get_port() << '\t' << session->DownstreamEndpoint().get_addr().to_string() << ':' << session->DownstreamEndpoint().get_port() << std::endl;
+			std::cout << session->TypeInfo() << '\t' << session->UpstreamEndpoint().addr().to_string() << ':' << session->UpstreamEndpoint().port() << '\t' << session->DownstreamEndpoint().addr().to_string() << ':' << session->DownstreamEndpoint().port() << std::endl;
 }
 
 void ProxyServer::Accept()
@@ -75,7 +75,7 @@ void ProxyServer::Accept()
 		InitAcceptor();
 		return;
 	}
-	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket_base> &&socket)
+	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket> &&socket)
 	{
 		if (err)
 		{
