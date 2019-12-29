@@ -12,7 +12,7 @@ Socks4Session::Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket
 	upTcp_->remote_endpoint(AccessUpstreamEndpoint(), err);
 	if (err)
 		AccessUpstreamEndpoint() = endpoint();
-	AccessTypeInfo() = "Socks4";
+	AccessSessionType() = "Socks4";
 }
 
 Socks4Session::~Socks4Session()
@@ -92,7 +92,7 @@ void Socks4Session::ReceiveUsername(size_t upBufPBegin)
 
 			if (upBuf_[4] == 0 && upBuf_[5] == 0 && upBuf_[6] == 0 && upBuf_[7] != 0)
 			{
-				AccessTypeInfo() = "Socks4a";
+				AccessSessionType() = "Socks4a";
 				ReceiveDomain(upBufP_);
 			}
 			else
@@ -156,17 +156,19 @@ void Socks4Session::DoRequest(uint8_t cmd, const endpoint &ep)
 	switch (cmd)
 	{
 	case CONNECT:
-		AccessTypeInfo().append(" Connect");
+		AccessSessionType().append(" Connect");
 		BeginConnect(ep);
 		break;
 	case BIND:
-		AccessTypeInfo().append(" Bind");
+		AccessSessionType().append(" Bind");
 		BeginBind(ep);
 		break;
 	default:
 		Stop();
 		return;
 	}
+
+	server_.PrintSession(*this);
 }
 
 void Socks4Session::BeginConnect(const endpoint &ep)
@@ -385,6 +387,7 @@ void Socks4Session::RelayUpBuf()
 			Stop();
 			return;
 		}
+		AddBytesDown(upBufPEnd_ - upBufP_);
 		upBufP_ = upBufPEnd_ = 0;
 		RelayUp();
 	});
@@ -402,13 +405,14 @@ void Socks4Session::RelayUp()
 			return;
 		}
 		async_write(*downTcp_, const_buffer(upBuf_.get(), transferred),
-			[this, self = std::move(self)](error_code err)
+			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
 			{
 				Stop();
 				return;
 			}
+			AddBytesDown(transferred);
 			RelayUp();
 		});
 	});
@@ -426,13 +430,14 @@ void Socks4Session::RelayDown()
 			return;
 		}
 		async_write(*upTcp_, const_buffer(downBuf_.get(), transferred),
-			[this, self = std::move(self)](error_code err)
+			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
 			{
 				Stop();
 				return;
 			}
+			AddBytesUp(transferred);
 			RelayDown();
 		});
 	});

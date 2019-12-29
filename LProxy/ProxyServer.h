@@ -12,9 +12,10 @@ public:
 	void Start();
 	void Stop();
 
-	void BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession> &&sessWeak);
-	void EndSession(ProxySession *sess);
+	void BeginSession(ProxySession *sessionPtr, std::weak_ptr<ProxySession> &&sessWeak);
+	void EndSession(ProxySession *session);
 
+	void PrintSession(const ProxySession &session);
 	void PrintSessions();
 
 	virtual prx_listener *NewUpstreamAcceptor() = 0;
