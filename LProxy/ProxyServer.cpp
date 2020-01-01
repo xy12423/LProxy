@@ -26,6 +26,8 @@ void ProxyServer::Stop()
 	std::lock_guard<std::recursive_mutex> lockSessions(sessionsMutex_);
 	std::lock_guard<std::recursive_mutex> lockAcceptor(acceptorMutex_);
 
+	boost::system::error_code ec;
+	acceptorRetryTimer_.cancel(ec);
 	error_code err;
 	acceptor_->close(err);
 	for (const auto &p : sessions_)
@@ -86,7 +88,7 @@ void ProxyServer::Accept()
 		InitAcceptor();
 		return;
 	}
-	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket> &&socket)
+	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket> &&socketPtr)
 	{
 		if (err)
 		{
@@ -94,8 +96,31 @@ void ProxyServer::Accept()
 			return;
 		}
 
-		auto session = std::make_shared<Socks5Session>(*this, std::move(socket));
-		session->Start();
+		prx_tcp_socket &socket = *socketPtr;
+		std::shared_ptr<std::unique_ptr<prx_tcp_socket>> sharedSocketPtr = std::make_shared<std::unique_ptr<prx_tcp_socket>>(std::move(socketPtr));
+		std::shared_ptr<char> firstByte = std::make_shared<char>();
+		async_read(socket, mutable_buffer(&*firstByte, 1),
+			[this, sharedSocketPtr = std::move(sharedSocketPtr), firstByte](error_code err)
+		{
+			if (err)
+				return;
+
+			switch (*firstByte)
+			{
+			case 4:
+			{
+				auto session = std::make_shared<Socks4Session>(*this, std::move(*sharedSocketPtr));
+				session->Start(*firstByte);
+				break;
+			}
+			case 5:
+			{
+				auto session = std::make_shared<Socks5Session>(*this, std::move(*sharedSocketPtr));
+				session->Start(*firstByte);
+				break;
+			}
+			}
+		});
 
 		Accept();
 	});
@@ -131,7 +156,7 @@ void ProxyServer::InitAcceptor()
 					InitAcceptorFailed();
 					return;
 				}
-				Start();
+				Accept();
 			});
 		});
 	});
@@ -147,6 +172,10 @@ void ProxyServer::InitAcceptorFailed()
 
 	acceptor_->async_close([this](error_code)
 	{
+		std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
+		if (stopping_)
+			return;
+
 		acceptorRetryTimer_.expires_after(std::chrono::seconds(5));
 		acceptorRetryTimer_.async_wait([this](const boost::system::error_code &ec)
 		{

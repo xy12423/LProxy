@@ -11,6 +11,7 @@ public:
 	virtual ~ProxySession();
 
 	virtual void Start() = 0;
+	virtual void Start(char firstByte) = 0;
 	virtual void Stop() = 0;
 
 	const endpoint &UpstreamEndpoint() const { return upEp_; }
@@ -34,5 +35,5 @@ protected:
 private:
 	endpoint upEp_, downEp_;
 	std::string type_;
-	size_t totalUp_ = 0, totalDown_ = 0, lastUp_ = 0, lastDown_ = 0;
+	std::atomic_size_t totalUp_{ 0 }, totalDown_{ 0 }, lastUp_{ 0 }, lastDown_{ 0 };
 };

@@ -19,6 +19,7 @@ public:
 	virtual ~Socks4Session();
 
 	virtual void Start() override;
+	virtual void Start(char firstByte) override;
 	virtual void Stop() override;
 private:
 	void ReceiveRequest();

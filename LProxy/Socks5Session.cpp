@@ -29,6 +29,14 @@ void Socks5Session::Start()
 	ReceiveHeader();
 }
 
+void Socks5Session::Start(char firstByte)
+{
+	auto self = shared_from_this();
+	server_.BeginSession(this, std::weak_ptr<ProxySession>(self));
+
+	ReceiveHeaderWithFirstByte(firstByte);
+}
+
 void Socks5Session::Stop()
 {
 	if (stopping_.exchange(true))
@@ -64,6 +72,33 @@ void Socks5Session::ReceiveHeader()
 			return;
 		}
 		if (upBuf_[0] != kSocksVersion)
+		{
+			Stop();
+			return;
+		}
+		ReceiveMethodRequested();
+	});
+}
+
+void Socks5Session::ReceiveHeaderWithFirstByte(char firstByte)
+{
+	auto self = shared_from_this();
+
+	selectedMethod = 0xFF;
+
+	//Max size of a vaild header is 257
+	static_assert(kBufSize >= 257, "upBuf_ is too small");
+
+	if (firstByte != kSocksVersion)
+	{
+		Stop();
+		return;
+	}
+	upBuf_[0] = firstByte;
+	async_read(*upTcp_, mutable_buffer(upBuf_.get() + 1, 1),
+		[this, self = std::move(self)](error_code err)
+	{
+		if (err)
 		{
 			Stop();
 			return;

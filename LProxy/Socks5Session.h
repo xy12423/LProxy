@@ -19,9 +19,11 @@ public:
 	virtual ~Socks5Session();
 
 	virtual void Start() override;
+	virtual void Start(char firstByte) override;
 	virtual void Stop() override;
 private:
 	void ReceiveHeader();
+	void ReceiveHeaderWithFirstByte(char firstByte);
 	void ReceiveMethodRequested();
 	void SendMethodSelected();
 

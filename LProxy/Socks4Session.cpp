@@ -29,6 +29,15 @@ void Socks4Session::Start()
 	ReceiveRequest();
 }
 
+void Socks4Session::Start(char firstByte)
+{
+	auto self = shared_from_this();
+	server_.BeginSession(this, std::weak_ptr<ProxySession>(self));
+
+	upBuf_[upBufPEnd_++] = firstByte;
+	ReceiveRequest();
+}
+
 void Socks4Session::Stop()
 {
 	if (stopping_.exchange(true))
@@ -44,25 +53,29 @@ void Socks4Session::Stop()
 
 void Socks4Session::ReceiveRequest()
 {
-	auto self = shared_from_this();
-
-	async_read(*upTcp_, mutable_buffer(upBuf_.get(), kFixedHeaderSize),
-		[this, self = std::move(self)](error_code err)
+	assert(upBufP_ <= upBufPEnd_);
+	if (upBufP_ + kFixedHeaderSize > upBufPEnd_)
 	{
-		if (err)
+		auto self = shared_from_this();
+		ReceiveMore([this, self = std::move(self)](error_code err)
 		{
-			Stop();
-			return;
-		}
-		if (upBuf_[0] != kSocksVersion)
-		{
-			Stop();
-			return;
-		}
-		upBufP_ += kFixedHeaderSize;
-		upBufPEnd_ += kFixedHeaderSize;
-		ReceiveUsername(upBufP_);
-	});
+			if (err)
+			{
+				Stop();
+				return;
+			}
+			ReceiveRequest();
+		});
+		return;
+	}
+
+	if (upBuf_[0] != kSocksVersion)
+	{
+		Stop();
+		return;
+	}
+	upBufP_ += kFixedHeaderSize;
+	ReceiveUsername(upBufP_);
 }
 
 void Socks4Session::ReceiveUsername(size_t upBufPBegin)
