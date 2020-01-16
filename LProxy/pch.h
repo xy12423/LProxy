@@ -38,7 +38,7 @@
 #include <libprxsocket/socket_raw.h>
 #include <libprxsocket/socket_http.h>
 #include <libprxsocket/socket_socks5.h>
-#include <libprxsocket/socket_websock.h>
+#include <libprxsocket/socket_obfs_websock.h>
 
 #ifdef _MSC_VER
 #pragma comment(lib, "cryptlib.lib")
