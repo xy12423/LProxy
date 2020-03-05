@@ -99,7 +99,7 @@ void ProxyServer::Accept()
 		prx_tcp_socket &socket = *socketPtr;
 		std::shared_ptr<std::unique_ptr<prx_tcp_socket>> sharedSocketPtr = std::make_shared<std::unique_ptr<prx_tcp_socket>>(std::move(socketPtr));
 		std::shared_ptr<char> firstByte = std::make_shared<char>();
-		async_read(socket, mutable_buffer(&*firstByte, 1),
+		socket.async_read(mutable_buffer(&*firstByte, 1),
 			[this, sharedSocketPtr = std::move(sharedSocketPtr), firstByte](error_code err)
 		{
 			if (err)

@@ -63,7 +63,7 @@ void Socks5Session::ReceiveHeader()
 	//Max size of a vaild header is 257
 	static_assert(kBufSize >= 257, "upBuf_ is too small");
 
-	async_read(*upTcp_, mutable_buffer(upBuf_.get(), 2),
+	upTcp_->async_read(mutable_buffer(upBuf_.get(), 2),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
@@ -95,7 +95,7 @@ void Socks5Session::ReceiveHeaderWithFirstByte(char firstByte)
 		return;
 	}
 	upBuf_[0] = firstByte;
-	async_read(*upTcp_, mutable_buffer(upBuf_.get() + 1, 1),
+	upTcp_->async_read(mutable_buffer(upBuf_.get() + 1, 1),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
@@ -111,7 +111,7 @@ void Socks5Session::ReceiveMethodRequested()
 {
 	auto self = shared_from_this();
 
-	async_read(*upTcp_, mutable_buffer(mutable_buffer(upBuf_.get() + 2, (uint8_t)upBuf_[1])),
+	upTcp_->async_read(mutable_buffer(mutable_buffer(upBuf_.get() + 2, (uint8_t)upBuf_[1])),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
@@ -131,7 +131,7 @@ void Socks5Session::SendMethodSelected()
 	std::shared_ptr<std::array<char, 2>> methodSelected = std::make_shared<std::array<char, 2>>();
 	(*methodSelected)[0] = kSocksVersion;
 	(*methodSelected)[1] = selectedMethod;
-	async_write(*upTcp_, const_buffer(methodSelected->data(), methodSelected->size()),
+	upTcp_->async_write(const_buffer(methodSelected->data(), methodSelected->size()),
 		[this, self = std::move(self), methodSelected](error_code err)
 	{
 		if (err)
@@ -480,7 +480,7 @@ void Socks5Session::SendSocks5(uint8_t type, const endpoint &ep, null_callback &
 		buf->push_back(ep.port() >> 8);	//DST.PORT
 		buf->push_back(ep.port() & 0xFF);
 
-		async_write(*upTcp_, const_buffer(*buf),
+		upTcp_->async_write(const_buffer(*buf),
 			[this, buf, callback](error_code err)
 		{
 			try
@@ -515,7 +515,7 @@ void Socks5Session::RecvSocks5(socksreq_callback &&complete_handler)
 	//Max socks5 req size is 262
 	static_assert(kBufSize >= 262, "upBuf_ is too small");
 
-	async_read(*upTcp_, mutable_buffer(upBuf_.get(), 5),
+	upTcp_->async_read(mutable_buffer(upBuf_.get(), 5),
 		[this, callback](error_code err)
 	{
 		try
@@ -556,7 +556,7 @@ void Socks5Session::RecvSocks5Body(const std::shared_ptr<socksreq_callback> &cal
 	default:
 		throw(socks5_error(ERR_UNSUPPORTED));
 	}
-	async_read(*upTcp_, mutable_buffer(upBuf_.get() + 5, bytesLast),
+	upTcp_->async_read(mutable_buffer(upBuf_.get() + 5, bytesLast),
 		[this, bytesLast, callback](error_code err)
 	{
 		try
@@ -593,7 +593,7 @@ void Socks5Session::RelayUp()
 			Stop();
 			return;
 		}
-		async_write(*downTcp_, const_buffer(upBuf_.get(), transferred),
+		downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
 			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
@@ -618,7 +618,7 @@ void Socks5Session::RelayDown()
 			Stop();
 			return;
 		}
-		async_write(*upTcp_, const_buffer(downBuf_.get(), transferred),
+		upTcp_->async_write(const_buffer(downBuf_.get(), transferred),
 			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
@@ -645,7 +645,7 @@ void Socks5Session::ReadUpWhileAccept()
 		}
 		if (downTcp_)
 		{
-			async_write(*downTcp_, const_buffer(upBuf_.get(), transferred),
+			downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
 				[this, self = std::move(self), transferred](error_code err)
 			{
 				if (err)
@@ -681,7 +681,7 @@ void Socks5Session::RelayUpUdpOverTcp()
 {
 	auto self = shared_from_this();
 
-	async_read(*upTcp_, mutable_buffer(udpOverTcpBuf_.get(), 2),
+	upTcp_->async_read(mutable_buffer(udpOverTcpBuf_.get(), 2),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
@@ -691,7 +691,7 @@ void Socks5Session::RelayUpUdpOverTcp()
 		}
 
 		uint16_t size = (uint8_t)udpOverTcpBuf_[0] | ((uint8_t)udpOverTcpBuf_[1] << 8u);
-		async_read(*upTcp_, mutable_buffer(udpOverTcpBuf_.get() + 2, size - 2),
+		upTcp_->async_read(mutable_buffer(udpOverTcpBuf_.get() + 2, size - 2),
 			[this, self = std::move(self), size](error_code err)
 		{
 			if (err)
@@ -823,7 +823,7 @@ void Socks5Session::RelayDownUdp()
 				(*buf)[0] = (uint8_t)(bufSize);
 				(*buf)[1] = (uint8_t)(bufSize >> 8);
 
-				async_write(*upTcp_, const_buffer(*buf),
+				upTcp_->async_write(const_buffer(*buf),
 					[this, self = std::move(self), buf, transferred](error_code err)
 				{
 					if (err)

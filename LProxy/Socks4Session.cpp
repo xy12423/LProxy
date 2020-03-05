@@ -355,7 +355,7 @@ void Socks4Session::SendResponse(uint8_t err, const endpoint &ep, null_callback 
 			throw(socks5_error(ERR_BAD_ARG_LOCAL));
 		buf->append(ep.addr().v4().data(), address_v4::addr_size);  //DSTADDR
 
-		async_write(*upTcp_, const_buffer(*buf),
+		upTcp_->async_write(const_buffer(*buf),
 			[this, buf, callback](error_code err)
 		{
 			try
@@ -392,7 +392,7 @@ void Socks4Session::RelayUpBuf()
 		return;
 	}
 	auto self = shared_from_this();
-	async_write(*downTcp_, const_buffer(upBuf_.get() + upBufP_, upBufPEnd_ - upBufP_),
+	downTcp_->async_write(const_buffer(upBuf_.get() + upBufP_, upBufPEnd_ - upBufP_),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
@@ -417,7 +417,7 @@ void Socks4Session::RelayUp()
 			Stop();
 			return;
 		}
-		async_write(*downTcp_, const_buffer(upBuf_.get(), transferred),
+		downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
 			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
@@ -442,7 +442,7 @@ void Socks4Session::RelayDown()
 			Stop();
 			return;
 		}
-		async_write(*upTcp_, const_buffer(downBuf_.get(), transferred),
+		upTcp_->async_write(const_buffer(downBuf_.get(), transferred),
 			[this, self = std::move(self), transferred](error_code err)
 		{
 			if (err)
