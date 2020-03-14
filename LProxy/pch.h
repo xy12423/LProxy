@@ -39,6 +39,13 @@
 #include <libprxsocket/socket_http.h>
 #include <libprxsocket/socket_socks5.h>
 #include <libprxsocket/socket_obfs_websock.h>
+#include <libprxsocket/socket_ss.h>
+#include <libprxsocket/socket_ss_crypto.h>
+#include <libprxsocket/socket_ssr_auth.h>
+#include <libprxsocket/socket_ssr_obfs.h>
+#include <libprxsocket/crypto_cryptopp.h>
+using namespace prxsocket;
+using namespace prxsocket::socks5_helper;
 
 #ifdef _MSC_VER
 #pragma comment(lib, "cryptlib.lib")
