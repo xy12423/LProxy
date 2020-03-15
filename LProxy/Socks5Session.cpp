@@ -152,7 +152,7 @@ void Socks5Session::ReceiveRequest()
 {
 	auto self = shared_from_this();
 
-	RecvSocks5([this, self = std::move(self)](error_code err, uint8_t cmd, const endpoint& ep)
+	ReceiveSocks5([this, self = std::move(self)](error_code err, uint8_t cmd, const endpoint& ep)
 	{
 		if (err)
 		{
@@ -508,7 +508,7 @@ void Socks5Session::SendSocks5(uint8_t type, const endpoint &ep, null_callback &
 	}
 }
 
-void Socks5Session::RecvSocks5(socksreq_callback &&complete_handler)
+void Socks5Session::ReceiveSocks5(socksreq_callback &&complete_handler)
 {
 	std::shared_ptr<socksreq_callback> callback = std::make_shared<socksreq_callback>(complete_handler);
 
@@ -524,7 +524,7 @@ void Socks5Session::RecvSocks5(socksreq_callback &&complete_handler)
 				throw(socks5_error(err));
 			if (upBuf_[0] != kSocksVersion || upBuf_[2] != 0) //VER && RSV
 				throw(socks5_error(ERR_BAD_ARG_REMOTE));
-			RecvSocks5Body(callback);
+			ReceiveSocks5Body(callback);
 		}
 		catch (socks5_error& ex)
 		{
@@ -539,7 +539,7 @@ void Socks5Session::RecvSocks5(socksreq_callback &&complete_handler)
 	});
 }
 
-void Socks5Session::RecvSocks5Body(const std::shared_ptr<socksreq_callback> &callback)
+void Socks5Session::ReceiveSocks5Body(const std::shared_ptr<socksreq_callback> &callback)
 {
 	size_t bytesLast;
 	switch (upBuf_[3])	//ATYP

@@ -40,8 +40,8 @@ private:
 	void EndWithError(error_code errCode);
 
 	void SendSocks5(uint8_t type, const endpoint &ep, null_callback &&complete_handler);
-	void RecvSocks5(socksreq_callback &&complete_handler);
-	void RecvSocks5Body(const std::shared_ptr<socksreq_callback> &callback);
+	void ReceiveSocks5(socksreq_callback &&complete_handler);
+	void ReceiveSocks5Body(const std::shared_ptr<socksreq_callback> &callback);
 
 	void RelayUp();
 	void RelayDown();
