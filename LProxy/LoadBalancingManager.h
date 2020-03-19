@@ -153,6 +153,12 @@ public:
 	void AsyncConnect(std::function<void(error_code, uint32_t)> &&completeHandler);
 	void AsyncAccept(std::function<void(error_code, uint32_t)> &&completeHandler);
 
+	void AsyncSend(uint32_t vConnId, const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler);
+	void AsyncReceive(uint32_t vConnId, const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler);
+
+	void Shutdown(uint32_t vConnId);
+
+	void NewConnection(size_t index, std::unique_ptr<prx_tcp_socket> &&socket, uint16_t rtt);
 private:
 	void AppendPendingSendSegment(uint32_t virtualConnectionId);
 	void DispatchPendingSendSegment();
@@ -165,10 +171,8 @@ private:
 
 	std::shared_ptr<BaseConnection> OccupyConnection();
 	void ReleaseConnection(std::shared_ptr<BaseConnection> &&conn, bool failed);
-	void InitConnection(size_t index);
 
-	virtual size_t NewBaseTcpSocketMaxIndex() const = 0;
-	virtual void NewBaseTcpSocket(size_t index, std::function<void(std::unique_ptr<prx_tcp_socket> &&, uint16_t)> &&completeHandler) const = 0;
+	virtual void OnConnectionReset(size_t index) {}
 
 	asio::io_context &ioContext_;
 

@@ -591,6 +591,55 @@ void LoadBalancingManager::AsyncAccept(std::function<void(error_code, uint32_t)>
 	completeHandler(0, vConnId);
 }
 
+void LoadBalancingManager::AsyncSend(uint32_t vConnId, const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
+{
+	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
+	auto itr = virtualConnections_.find(vConnId);
+	if (itr == virtualConnections_.end())
+	{
+		generalLock.unlock();
+		completeHandler(ERR_OPERATION_FAILURE, 0);
+		return;
+	}
+	std::shared_ptr<VirtualConnection> virtualConnection = itr->second;
+	generalLock.unlock();
+	virtualConnection->AsyncSendData(buffer, std::move(completeHandler));
+}
+
+void LoadBalancingManager::AsyncReceive(uint32_t vConnId, const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
+{
+	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
+	auto itr = virtualConnections_.find(vConnId);
+	if (itr == virtualConnections_.end())
+	{
+		generalLock.unlock();
+		completeHandler(ERR_OPERATION_FAILURE, 0);
+		return;
+	}
+	std::shared_ptr<VirtualConnection> virtualConnection = itr->second;
+	generalLock.unlock();
+	virtualConnection->AsyncReceiveData(buffer, std::move(completeHandler));
+}
+
+void LoadBalancingManager::Shutdown(uint32_t vConnId)
+{
+	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
+	auto itr = virtualConnections_.find(vConnId);
+	if (itr != virtualConnections_.end())
+	{
+		std::shared_ptr<VirtualConnection> virtualConnection = itr->second;
+		generalLock.unlock();
+		virtualConnection->Shutdown();
+	}
+}
+
+void LoadBalancingManager::NewConnection(size_t index, std::unique_ptr<prx_tcp_socket>&& socket, uint16_t rtt)
+{
+	std::shared_ptr<BaseConnection> baseConnection = std::make_shared<BaseConnection>(index, std::move(socket), rtt);
+	ReceiveSegment(baseConnection);
+	ReleaseConnection(std::move(baseConnection), false);
+}
+
 void LoadBalancingManager::AppendPendingSendSegment(uint32_t virtualConnectionId)
 {
 	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
@@ -721,7 +770,7 @@ void LoadBalancingManager::EndReceiveSegmentWithError(const std::shared_ptr<Base
 		generalLock.unlock();
 		receiveSocket->socket->async_close([this, receiveSocket](error_code)
 		{
-			ioContext_.post([this, receiveSocket]() { InitConnection(receiveSocket->index); });
+			ioContext_.post([this, receiveSocket]() { OnConnectionReset(receiveSocket->index); });
 		});
 	}
 	else
@@ -755,7 +804,7 @@ void LoadBalancingManager::ReleaseConnection(std::shared_ptr<BaseConnection> &&c
 		std::shared_ptr<BaseConnection> connection = std::move(conn);
 		connection->socket->async_close([this, connection](error_code)
 		{
-			ioContext_.post([this, connection]() { InitConnection(connection->index); });
+			ioContext_.post([this, connection]() { OnConnectionReset(connection->index); });
 		});
 		return;
 	}
@@ -768,17 +817,4 @@ void LoadBalancingManager::ReleaseConnection(std::shared_ptr<BaseConnection> &&c
 		generalLock.unlock();
 		DispatchPendingSendSegment();
 	}
-}
-
-void LoadBalancingManager::InitConnection(size_t index)
-{
-	NewBaseTcpSocket(index,
-		[this, index](std::unique_ptr<prx_tcp_socket> &&socket, uint16_t rtt)
-	{
-		if (!socket)
-			return;
-		std::shared_ptr<BaseConnection> baseConnection = std::make_shared<BaseConnection>(index, std::move(socket), rtt);
-		ReceiveSegment(baseConnection);
-		ReleaseConnection(std::move(baseConnection), false);
-	});
 }
