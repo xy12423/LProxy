@@ -10,6 +10,35 @@ Wnd     1b 13
 Len     2b 14
 */
 
+template <typename T, typename ...TArgs>
+inline static void SafeCallback(T &callback, TArgs &&...args)
+{
+	T func = std::move(callback);
+	callback = nullptr;
+	func(std::forward<TArgs>(args)...);
+}
+
+void LoadBalancingManager::VirtualConnection::AsyncStart(null_callback &&completeHandler)
+{
+	AppendSendSegment(SYN, nullptr, 0, std::move(completeHandler));
+}
+
+void LoadBalancingManager::VirtualConnection::AsyncSendData(const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
+{
+	std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
+	size_t transferring = std::min(buffer.size(), kMaxSegmentSize);
+	AppendSendSegment(0, buffer.data(), transferring,
+		[this, transferring, callback](error_code err)
+	{
+		if (err)
+		{
+			(*callback)(err, 0);
+			return;
+		}
+		(*callback)(0, transferring);
+	});
+}
+
 void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler)
 {
 	thread_local std::vector<char> segmentData;
@@ -44,7 +73,7 @@ void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, c
 void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 	{
 		completeHandler(ERR_OPERATION_FAILURE);
 		return;
@@ -84,7 +113,7 @@ void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, s
 			ioContext_.post([this, self = shared_from_this(), sendingSegment, callback]()
 			{
 				std::unique_lock<std::recursive_mutex> lock(mutex_);
-				if (closed)
+				if (closed_)
 				{
 					(*callback)(ERR_OPERATION_FAILURE);
 					return;
@@ -108,7 +137,7 @@ void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, s
 void LoadBalancingManager::VirtualConnection::BeginSendSegment()
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 		return;
 	if (!inQueue_)
 	{
@@ -143,7 +172,7 @@ void LoadBalancingManager::VirtualConnection::BeginSendSegment()
 void LoadBalancingManager::VirtualConnection::BeginSendSegmentAck()
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 		return;
 	if (!inQueue_)
 	{
@@ -156,7 +185,7 @@ void LoadBalancingManager::VirtualConnection::BeginSendSegmentAck()
 void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_ptr<Connection> &connection)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 		return;
 
 	inQueue_ = false;
@@ -237,7 +266,7 @@ void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_pt
 	if (sendingSegment->data[12] & RST) //RST sent
 	{
 		lock.lock();
-		if (closed)
+		if (closed_)
 			return;
 		ShutdownCheck();
 		return;
@@ -251,7 +280,7 @@ void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared
 	if (sendingSegment->isAcknowledgement) //ACK doesn't need retransmission
 		return;
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 		return;
 	if (sendingSegment->state != SendSegment::SENT || sendingSegment->tryCount != tryCount) //Prevents re-retransmission
 		return;
@@ -261,33 +290,10 @@ void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared
 	BeginSendSegment();
 }
 
-void LoadBalancingManager::VirtualConnection::AsyncSendData(const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
-{
-	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
-	{
-		lock.unlock();
-		completeHandler(ERR_OPERATION_FAILURE, 0);
-		return;
-	}
-	std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
-	size_t transferring = std::min(buffer.size(), kMaxSegmentSize);
-	AppendSendSegment(0, buffer.data(), transferring,
-		[this, transferring, callback](error_code err)
-	{
-		if (err)
-		{
-			(*callback)(err, 0);
-			return;
-		}
-		(*callback)(0, transferring);
-	});
-}
-
 void LoadBalancingManager::VirtualConnection::AsyncReceiveData(const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 	{
 		lock.unlock();
 		completeHandler(ERR_OPERATION_FAILURE, 0);
@@ -330,7 +336,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	uint8_t wnd = data[13];
 
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed)
+	if (closed_)
 		return;
 	if (shutdownFlags_ & SHUTDOWN_RECEIVE)
 	{
@@ -437,8 +443,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 				receiveSegmentComplete_ = i - 1;
 				if (receiveCallback_ && i > 0)
 				{
-					receiveCallback_(0);
-					receiveCallback_ = nullptr;
+					SafeCallback(receiveCallback_, 0);
 				}
 			}
 		}
@@ -448,8 +453,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	{
 		if (sendCallback_ && sendSegmentIdPending_ - sendLaskAck_ <= sendWindow_)
 		{
-			sendCallback_(0);
-			sendCallback_ = nullptr;
+			SafeCallback(sendCallback_, 0);
 		}
 	}
 	if (needAck) //Send an ACK if needed
@@ -502,22 +506,20 @@ void LoadBalancingManager::VirtualConnection::Reset()
 
 void LoadBalancingManager::VirtualConnection::ShutdownCheck()
 {
-	if ((shutdownFlags_ & SHUTDOWN_COMPLETE) == SHUTDOWN_COMPLETE && (!shutdownTimerSet || (shutdownFlags_ & SHUTDOWN_FORCE)))
+	if ((shutdownFlags_ & SHUTDOWN_COMPLETE) == SHUTDOWN_COMPLETE && (!shutdownTimerSet_ || (shutdownFlags_ & SHUTDOWN_FORCE)))
 	{
 		if (sendCallback_)
 		{
-			sendCallback_(ERR_OPERATION_FAILURE);
-			sendCallback_ = nullptr;
+			SafeCallback(sendCallback_, ERR_OPERATION_FAILURE);
 		}
 		if (receiveCallback_)
 		{
-			receiveCallback_(ERR_OPERATION_FAILURE);
-			receiveCallback_ = nullptr;
+			SafeCallback(receiveCallback_, ERR_OPERATION_FAILURE);
 		}
 		if (shutdownFlags_ & SHUTDOWN_FORCE)
 		{
 			shutdownTimer_.cancel();
-			closed = true;
+			closed_ = true;
 			ioContext_.post([this, self = shared_from_this()]() { parent_.OnVirtualConnectionClosed(virtualConnectionId_); });
 		}
 		else
@@ -527,16 +529,66 @@ void LoadBalancingManager::VirtualConnection::ShutdownCheck()
 				if (!ec)
 				{
 					std::unique_lock<std::recursive_mutex> lock(mutex_);
-					if (closed)
+					if (closed_)
 						return;
-					closed = true;
+					closed_ = true;
 					lock.unlock();
 					parent_.OnVirtualConnectionClosed(virtualConnectionId_);
 				}
 			});
 		}
-		shutdownTimerSet = true;
+		shutdownTimerSet_ = true;
 	}
+}
+
+void LoadBalancingManager::AsyncConnect(std::function<void(error_code, uint32_t)> &&completeHandler)
+{
+	thread_local CryptoPP::AutoSeededRandomPool prng;
+	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
+	uint32_t vConnId;
+	do
+	{
+		vConnId = prng.GenerateWord32();
+	} while (virtualConnections_.count(vConnId) > 0);
+	std::shared_ptr<VirtualConnection> virtualConnection = std::make_shared<VirtualConnection>(vConnId, ioContext_, *this);
+	virtualConnections_.emplace(vConnId, virtualConnection);
+	generalLock.unlock();
+	auto callback = std::make_shared<std::function<void(error_code, uint32_t)>>(std::move(completeHandler));
+	virtualConnection->AsyncStart([this, callback, vConnId](error_code err)
+	{
+		if (err)
+		{
+			(*callback)(err, 0);
+			return;
+		}
+		(*callback)(0, vConnId);
+	});
+}
+
+void LoadBalancingManager::AsyncAccept(std::function<void(error_code, uint32_t)> &&completeHandler)
+{
+	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
+	if (acceptQueue_.empty())
+	{
+		auto callback = std::make_shared<std::function<void(error_code, uint32_t)>>(std::move(completeHandler));
+		acceptCallback_ = [this, callback](error_code err)
+		{
+			if (err)
+			{
+				(*callback)(err, 0);
+				return;
+			}
+			ioContext_.post([this, callback]()
+			{
+				AsyncAccept(std::move(*callback));
+			});
+		};
+		return;
+	}
+	uint32_t vConnId = acceptQueue_.front();
+	acceptQueue_.pop_front();
+	generalLock.unlock();
+	completeHandler(0, vConnId);
 }
 
 void LoadBalancingManager::AppendPendingSendSegment(uint32_t virtualConnectionId)
@@ -640,9 +692,16 @@ void LoadBalancingManager::EndReceiveSegment(const std::shared_ptr<BaseConnectio
 			virtualConnection->Reset();
 			return;
 		}
+		//SYN
+		if (acceptQueue_.size() > kAcceptQueueMax)
+			return; //Drop
 		virtualConnection = std::make_shared<VirtualConnection>(vConnId, ioContext_, *this);
 		virtualConnections_.emplace(vConnId, virtualConnection);
-		//TODO: notify prx_listener
+		acceptQueue_.push_back(vConnId);
+		if (acceptCallback_)
+		{
+			SafeCallback(acceptCallback_, 0);
+		}
 	}
 	else
 	{

@@ -10,6 +10,8 @@ class LoadBalancingManager
 		ACK = 0x08,
 	};
 
+	static constexpr size_t kAcceptQueueMax = 8;
+
 	struct BaseConnection
 	{
 		BaseConnection() = default;
@@ -103,6 +105,8 @@ class LoadBalancingManager
 
 		uint32_t VirtualConnectionId() const { return virtualConnectionId_; }
 
+		void AsyncStart(null_callback &&completeHandler);
+
 		void AsyncSendData(const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler);
 		void AsyncReceiveData(const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler);
 
@@ -143,9 +147,12 @@ class LoadBalancingManager
 		std::recursive_mutex mutex_;
 		asio::steady_timer shutdownTimer_;
 		uint8_t shutdownFlags_ = 0;
-		bool inQueue_ = false, shutdownTimerSet = false, closed = false;
+		bool inQueue_ = false, shutdownTimerSet_ = false, closed_ = false;
 	};
 public:
+	void AsyncConnect(std::function<void(error_code, uint32_t)> &&completeHandler);
+	void AsyncAccept(std::function<void(error_code, uint32_t)> &&completeHandler);
+
 private:
 	void AppendPendingSendSegment(uint32_t virtualConnectionId);
 	void DispatchPendingSendSegment();
@@ -170,4 +177,6 @@ private:
 	std::unordered_set<uint32_t> requestQueueSet_;
 	std::unordered_map<uint32_t, std::shared_ptr<BaseConnection>> idleConnections_;
 	std::unordered_map<uint32_t, std::shared_ptr<VirtualConnection>> virtualConnections_;
+	std::deque<uint32_t> acceptQueue_;
+	std::function<void(error_code err)> acceptCallback_;
 };
