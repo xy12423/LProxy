@@ -12,44 +12,66 @@ Len     2b 14
 
 void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler)
 {
+	thread_local std::vector<char> segmentData;
+	//Construct segment (except seq, ack and wnd)
+	segmentData.resize(16 + payloadSize);
+	char *data = segmentData.data();
+	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
+	memcpy(data, &virtualConnectionIdLE, 4);
+	data[12] = flags;
+	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
+	memcpy(data + 14, &payloadSizeLE, 2);
+	memcpy(data + 16, payload, payloadSize);
+	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
+}
+
+void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler)
+{
+	thread_local std::vector<char> segmentData;
+	//Construct segment (except seq, ack and wnd)
+	uint16_t payloadSize = std::min(payload.size_total(), kMaxSegmentSize);
+	segmentData.resize(16 + payloadSize);
+	char *data = segmentData.data();
+	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
+	memcpy(data, &virtualConnectionIdLE, 4);
+	data[12] = flags;
+	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
+	memcpy(data + 14, &payloadSizeLE, 2);
+	payload.gather(data + 16, payloadSize);
+	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
+}
+
+void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler)
+{
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed)
+	{
+		completeHandler(ERR_OPERATION_FAILURE);
 		return;
+	}
+	if ((shutdownFlags_ & SHUTDOWN_SEND) && !(flags & RST))
+	{
+		completeHandler(ERR_OPERATION_FAILURE);
+		return;
+	}
 
 	bool isAck = (flags & ACK) || (flags & RST);
 	uint32_t sendSegmentId = sendSegmentIdNext_;
 	if (!isAck)
 		++sendSegmentIdNext_; //ACKs don't take new segid
 
-	lock.unlock();
-
 	std::shared_ptr<SendSegment> sendingSegment = std::make_shared<SendSegment>(ioContext_, sendSegmentId, isAck);
-	sendingSegment->data.resize(16 + payloadSize);
-	char *data = sendingSegment->data.data();
-	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
-	memcpy(data, &virtualConnectionIdLE, 4);
+	sendingSegment->data = std::move(segmentWithPartOfHeader);
 	uint32_t sendSegmentIdLE = boost::endian::native_to_little(sendSegmentId);
-	memcpy(data + 4, &sendSegmentIdLE, 4);
-	data[12] = flags;
-	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
-	memcpy(data + 14, &payloadSizeLE, 2);
-	memcpy(data + 16, payload, payloadSize);
+	memcpy(sendingSegment->data.data() + 4, &sendSegmentIdLE, 4); //Set seq
 
-	lock.lock();
-	if (closed)
-		return;
-
-	if (shutdownFlags & SHUTDOWN_SEND)
-	{
-		completeHandler(ERR_OPERATION_FAILURE);
-		return;
-	}
 	if (flags & FIN)
-		shutdownFlags |= SHUTDOWN_SEND;
+		shutdownFlags_ |= SHUTDOWN_SEND;
 	if (flags & RST)
-		shutdownFlags |= SHUTDOWN_COMPLETE;
+		shutdownFlags_ |= SHUTDOWN_RESET;
 	if (sendSegmentId - sendLaskAck_ > sendWindow_)
 	{
+		assert(!sendCallback_);
 		std::shared_ptr<SegmentCallback> callback = std::make_shared<SegmentCallback>(completeHandler);
 		sendSegmentIdPending_ = sendSegmentId;
 		sendCallback_ = [this, sendingSegment, callback](error_code err)
@@ -63,7 +85,10 @@ void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, c
 			{
 				std::unique_lock<std::recursive_mutex> lock(mutex_);
 				if (closed)
+				{
+					(*callback)(ERR_OPERATION_FAILURE);
 					return;
+				}
 				sendSegments_.push_back(std::move(sendingSegment));
 				lock.unlock();
 				BeginSendSegment();
@@ -115,7 +140,20 @@ void LoadBalancingManager::VirtualConnection::BeginSendSegment()
 	}
 }
 
-void LoadBalancingManager::VirtualConnection::DoSendSegment(const std::shared_ptr<Connection> &connection)
+void LoadBalancingManager::VirtualConnection::BeginSendSegmentAck()
+{
+	std::unique_lock<std::recursive_mutex> lock(mutex_);
+	if (closed)
+		return;
+	if (!inQueue_)
+	{
+		inQueue_ = true;
+		lock.unlock();
+		parent_.AppendPendingSendSegment(virtualConnectionId_);
+	}
+}
+
+void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_ptr<Connection> &connection)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed)
@@ -164,10 +202,10 @@ void LoadBalancingManager::VirtualConnection::DoSendSegment(const std::shared_pt
 		data[14] = data[15] = 0;
 	}
 
-	uint32_t ackLE = boost::endian::native_to_little(receiveSegmentIdComplete_);
+	uint32_t ackLE = boost::endian::native_to_little(receiveSegmentIdOffset_ + receiveSegmentComplete_);
 	assert(sendingSegment->data.size() >= 16);
 	memcpy(sendingSegment->data.data() + 8, &ackLE, 4);
-	sendingSegment->data[13] = (uint8_t)(std::extent<decltype(receiveSegments_)>::value - (receiveSegmentIdComplete_ - receiveSegmentOffset_));
+	sendingSegment->data[13] = (uint8_t)(kMaxWindowSize - receiveSegmentComplete_ - 1);
 
 	sendingSegment->state = SendSegment::SENT;
 	++sendingSegment->tryCount;
@@ -198,6 +236,9 @@ void LoadBalancingManager::VirtualConnection::DoSendSegment(const std::shared_pt
 	});
 	if (sendingSegment->data[12] & RST) //RST sent
 	{
+		lock.lock();
+		if (closed)
+			return;
 		ShutdownCheck();
 		return;
 	}
@@ -220,6 +261,64 @@ void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared
 	BeginSendSegment();
 }
 
+void LoadBalancingManager::VirtualConnection::AsyncSendData(const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
+{
+	std::unique_lock<std::recursive_mutex> lock(mutex_);
+	if (closed)
+	{
+		lock.unlock();
+		completeHandler(ERR_OPERATION_FAILURE, 0);
+		return;
+	}
+	std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
+	size_t transferring = std::min(buffer.size(), kMaxSegmentSize);
+	AppendSendSegment(0, buffer.data(), transferring,
+		[this, transferring, callback](error_code err)
+	{
+		if (err)
+		{
+			(*callback)(err, 0);
+			return;
+		}
+		(*callback)(0, transferring);
+	});
+}
+
+void LoadBalancingManager::VirtualConnection::AsyncReceiveData(const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
+{
+	std::unique_lock<std::recursive_mutex> lock(mutex_);
+	if (closed)
+	{
+		lock.unlock();
+		completeHandler(ERR_OPERATION_FAILURE, 0);
+		return;
+	}
+	if (receiveSegmentComplete_ >= 0x80000000)
+	{
+		std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
+		assert(!receiveCallback_);
+		receiveCallback_ = [this, buffer, callback](error_code err)
+		{
+			if (err)
+			{
+				(*callback)(err, 0);
+				return;
+			}
+			ioContext_.post([this, self = shared_from_this(), buffer, callback]()
+			{
+				AsyncReceiveData(buffer, std::move(*callback));
+			});
+		};
+		return;
+	}
+	size_t transferred;
+	bool windowChanged = ConsumeReceiveSegment(buffer.data(), buffer.size(), transferred);
+	lock.unlock();
+	completeHandler(0, transferred);
+	if (windowChanged)
+		BeginSendSegmentAck();
+}
+
 void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data, size_t size)
 {
 	uint32_t seq, ack;
@@ -233,19 +332,18 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed)
 		return;
-	if (shutdownFlags & SHUTDOWN_RECEIVE)
+	if (shutdownFlags_ & SHUTDOWN_RECEIVE)
 	{
 		if (flags & RST) //Process only RST after SHUTDOWN_RECEIVE is set (FIN received)
 		{
-			shutdownFlags |= SHUTDOWN_COMPLETE;
+			shutdownFlags_ |= SHUTDOWN_RESET;
 			ShutdownCheck();
 			return;
 		}
-		if (!(flags & ACK) && !inQueue_) //Other things are discarded, just send an ACK if needed
+		if (!(flags & ACK)) //Other things are discarded, just send an ACK if needed
 		{
-			inQueue_ = true;
 			lock.unlock();
-			parent_.AppendPendingSendSegment(virtualConnectionId_);
+			BeginSendSegmentAck();
 		}
 		return;
 	}
@@ -263,7 +361,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 			if (segment->data[12] & FIN)
 			{
 				assert(itr == --sendSegments_.end());
-				shutdownFlags |= SHUTDOWN_SENT;
+				shutdownFlags_ |= SHUTDOWN_SENT;
 				ShutdownCheck();
 			}
 		}
@@ -284,7 +382,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	//Process special flags
 	if (flags & RST)
 	{
-		shutdownFlags |= SHUTDOWN_COMPLETE;
+		shutdownFlags_ |= SHUTDOWN_RESET;
 		ShutdownCheck();
 		return;
 	}
@@ -295,14 +393,14 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	}
 	else
 	{
-		//Reassemble
-		size_t segmentPosition = seq - receiveSegmentOffset_;
-		if (segmentPosition < kMaxWindowSize)
+		//Try reassemble
+		size_t segmentIndex = seq - receiveSegmentIdOffset_;
+		if (segmentIndex < kMaxWindowSize)
 		{
-			auto &receiveSegment = receiveSegments_[segmentPosition];
-			if (receiveSegment.first)
+			auto &receiveSegment = receiveSegments_[segmentIndex];
+			if (receiveSegment.ok)
 			{
-				if (receiveSegment.second.size() != size)
+				if (receiveSegment.flags != flags || receiveSegment.data.size() != size - 16)
 				{
 					lock.unlock();
 					Reset();
@@ -311,16 +409,32 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 			}
 			else
 			{
-				receiveSegment.first = true;
-				receiveSegments_->second.assign(data, data + size);
-				if (segmentPosition + 1 > receiveSegmentCount_)
-					receiveSegmentCount_ = segmentPosition + 1;
+				//Received new segment
+				receiveSegment.ok = true;
+				receiveSegment.flags = flags;
+				receiveSegment.data.assign(data + 16, data + size);
+				if (segmentIndex + 1 > receiveSegmentCount_)
+					receiveSegmentCount_ = segmentIndex + 1;
 
+				//Reassemble
 				uint32_t i = 0;
 				for (; i < receiveSegmentCount_; ++i)
-					if (!receiveSegments_[i].first)
+				{
+					if (!receiveSegments_[i].ok)
 						break;
-				receiveSegmentIdComplete_ = receiveSegmentOffset_ + i - 1;
+					if (receiveSegments_[i].flags & FIN)
+					{
+						//FIN appeared, discard all segments after that, set SHUTDOWN_RECEIVE
+						for (uint32_t j = ++i; j < receiveSegmentCount_; ++j)
+							receiveSegments_[j].ok = false;
+						shutdownFlags_ |= SHUTDOWN_RECEIVE;
+						ShutdownCheck();
+						if (!(shutdownFlags_ & SHUTDOWN_SEND))
+							ioContext_.post([this, self = shared_from_this()]() { Shutdown(); });
+						break;
+					}
+				}
+				receiveSegmentComplete_ = i - 1;
 				if (receiveCallback_ && i > 0)
 				{
 					receiveCallback_(0);
@@ -338,11 +452,90 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 			sendCallback_ = nullptr;
 		}
 	}
-	if (needAck && !inQueue_) //Send an ACK if needed
+	if (needAck) //Send an ACK if needed
 	{
-		inQueue_ = true;
 		lock.unlock();
-		parent_.AppendPendingSendSegment(virtualConnectionId_);
+		BeginSendSegmentAck();
+	}
+}
+
+bool LoadBalancingManager::VirtualConnection::ConsumeReceiveSegment(char *dst, size_t dstSize, size_t &transferred)
+{
+	size_t srcIndex = 0;
+	transferred = 0;
+	while (receiveSegmentComplete_ - srcIndex < 0x80000000 && dstSize > 0)
+	{
+		assert(receiveSegments_[srcIndex].ok);
+		size_t copying = std::min(dstSize, receiveSegments_[srcIndex].data.size() - receiveSegmentDataOffset_);
+		memcpy(dst, receiveSegments_[srcIndex].data.data() + receiveSegmentDataOffset_, copying);
+		transferred += copying;
+		receiveSegmentDataOffset_ += copying;
+		dstSize -= copying;
+		if (receiveSegmentDataOffset_ >= receiveSegments_[srcIndex].data.size())
+		{
+			receiveSegments_[srcIndex].ok = false;
+			++srcIndex;
+			receiveSegmentDataOffset_ = 0;
+		}
+	}
+	if (srcIndex > 0)
+	{
+		for (uint32_t i = 0; srcIndex + i < kMaxWindowSize; ++i)
+			std::swap(receiveSegments_[i], receiveSegments_[srcIndex + i]);
+		receiveSegmentIdOffset_ += srcIndex;
+		receiveSegmentComplete_ -= srcIndex;
+		receiveSegmentCount_ -= srcIndex;
+		return true;
+	}
+	return false;
+}
+
+void LoadBalancingManager::VirtualConnection::Shutdown()
+{
+	AppendSendSegment(FIN, nullptr, 0, [](error_code) {});
+}
+
+void LoadBalancingManager::VirtualConnection::Reset()
+{
+	AppendSendSegment(RST, nullptr, 0, [](error_code) {});
+}
+
+void LoadBalancingManager::VirtualConnection::ShutdownCheck()
+{
+	if ((shutdownFlags_ & SHUTDOWN_COMPLETE) == SHUTDOWN_COMPLETE && (!shutdownTimerSet || (shutdownFlags_ & SHUTDOWN_FORCE)))
+	{
+		if (sendCallback_)
+		{
+			sendCallback_(ERR_OPERATION_FAILURE);
+			sendCallback_ = nullptr;
+		}
+		if (receiveCallback_)
+		{
+			receiveCallback_(ERR_OPERATION_FAILURE);
+			receiveCallback_ = nullptr;
+		}
+		if (shutdownFlags_ & SHUTDOWN_FORCE)
+		{
+			shutdownTimer_.cancel();
+			closed = true;
+			ioContext_.post([this, self = shared_from_this()]() { parent_.OnVirtualConnectionClosed(virtualConnectionId_); });
+		}
+		else
+		{
+			shutdownTimer_.async_wait([this, self = shared_from_this()](const boost::system::error_code &ec)
+			{
+				if (!ec)
+				{
+					std::unique_lock<std::recursive_mutex> lock(mutex_);
+					if (closed)
+						return;
+					closed = true;
+					lock.unlock();
+					parent_.OnVirtualConnectionClosed(virtualConnectionId_);
+				}
+			});
+		}
+		shutdownTimerSet = true;
 	}
 }
 
@@ -388,7 +581,7 @@ void LoadBalancingManager::DispatchPendingSendSegment()
 		return;
 
 	generalLock.unlock();
-	virtualConnection->DoSendSegment(connection);
+	virtualConnection->OnSendSegment(connection);
 }
 
 void LoadBalancingManager::ReceiveSegment(const std::shared_ptr<BaseConnection> &receiveSocket)
@@ -441,17 +634,21 @@ void LoadBalancingManager::EndReceiveSegment(const std::shared_ptr<BaseConnectio
 			return;
 		if (!(flags & SYN))
 		{
-			//TODO: make corresponding vConn and send RST
+			virtualConnection = std::make_shared<VirtualConnection>(vConnId, ioContext_, *this);
+			virtualConnections_.emplace(vConnId, virtualConnection);
+			//Not releasing lock to ensure Reset first
+			virtualConnection->Reset();
 			return;
 		}
-		//TODO: make corresponding vConn
-		generalLock.unlock();
+		virtualConnection = std::make_shared<VirtualConnection>(vConnId, ioContext_, *this);
+		virtualConnections_.emplace(vConnId, virtualConnection);
+		//TODO: notify prx_listener
 	}
 	else
 	{
 		virtualConnection = itr->second;
-		generalLock.unlock();
 	}
+	generalLock.unlock();
 	virtualConnection->OnReceiveSegment(receiveSocket->receiveBuffer, 16 + len);
 }
 
@@ -473,6 +670,12 @@ void LoadBalancingManager::EndReceiveSegmentWithError(const std::shared_ptr<Base
 		generalLock.unlock();
 		receiveSocket->socket->async_close([this, receiveSocket](error_code) {});
 	}
+}
+
+void LoadBalancingManager::OnVirtualConnectionClosed(uint32_t virtualConnectionId)
+{
+	std::lock_guard<std::recursive_mutex> generalLock(generalMutex_);
+	virtualConnections_.erase(virtualConnectionId);
 }
 
 std::shared_ptr<LoadBalancingManager::BaseConnection> LoadBalancingManager::OccupyConnection()
