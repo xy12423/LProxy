@@ -47,7 +47,7 @@ void ProxyServer::BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession
 	auto sess = sessWeak.lock();
 	assert(&*sess == sessPtr);
 	if (sess)
-		sessions_.insert_or_assign(sessPtr, sessWeak);
+		sessions_[sessPtr] = sessWeak;
 }
 
 void ProxyServer::EndSession(ProxySession *sess)

@@ -48,13 +48,13 @@ class LoadBalancingManager
 		bool connectionFailed = false;
 	};
 
-	class VirtualConnection : std::enable_shared_from_this<VirtualConnection>
+	class VirtualConnection : public std::enable_shared_from_this<VirtualConnection>
 	{
 		using SegmentCallback = null_callback;
 
 		static constexpr uint16_t kTimeRetryMin = 100;
 		static constexpr auto kTimeShutdownWait = std::chrono::seconds(10);
-		static constexpr uint16_t kMaxWindowSize = 8;
+		static constexpr uint16_t kMaxWindowSize = 32;
 		static constexpr size_t kMaxSegmentSize = 4096;
 
 		enum
@@ -86,6 +86,8 @@ class LoadBalancingManager
 			boost::asio::steady_timer retryTimer;
 			size_t tryCount = 0;
 
+			std::chrono::steady_clock::time_point timeStart, timeTry;
+
 			std::vector<char> data; //Contains complete segment including header with ACK left empty(will be filled when sending)
 		};
 
@@ -113,7 +115,8 @@ class LoadBalancingManager
 		void OnSendSegment(const std::shared_ptr<Connection> &connection);
 		void OnReceiveSegment(const char *data, size_t size);
 
-		void Shutdown();
+		void ShutdownSend();
+		void ShutdownReceive();
 		void Reset();
 	private:
 		void AppendSendSegment(uint8_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler);
@@ -126,6 +129,7 @@ class LoadBalancingManager
 
 		//Returns whether receive window is changed
 		bool ConsumeReceiveSegment(char *dst, size_t dstSize, size_t &transferred);
+		bool ConsumeReceiveSegmentEmpty();
 
 		void ShutdownCheck();
 
@@ -162,6 +166,8 @@ public:
 
 	void NewConnection(size_t index, std::unique_ptr<prx_tcp_socket> &&socket, uint16_t rtt);
 	virtual void OnConnectionReset(size_t index) {}
+protected:
+	asio::io_context &IoContext() { return ioContext_; }
 private:
 	void AppendPendingSendSegment(uint32_t virtualConnectionId);
 	void DispatchPendingSendSegment();
@@ -180,7 +186,7 @@ private:
 	std::recursive_mutex generalMutex_;
 	std::deque<uint32_t> requestQueue_;
 	std::unordered_set<uint32_t> requestQueueSet_;
-	std::unordered_map<uint32_t, std::shared_ptr<BaseConnection>> idleConnections_;
+	std::unordered_map<size_t, std::shared_ptr<BaseConnection>> idleConnections_;
 	std::unordered_map<uint32_t, std::shared_ptr<VirtualConnection>> virtualConnections_;
 	std::deque<uint32_t> acceptQueue_;
 	std::function<void(error_code err)> acceptCallback_;

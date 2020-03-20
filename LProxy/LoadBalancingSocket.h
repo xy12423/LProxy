@@ -58,13 +58,13 @@ public:
 	virtual void open(error_code &ec) override { ec = 0; }
 	virtual void async_open(null_callback &&complete_handler) override { complete_handler(0); }
 
-	virtual void bind(const endpoint &endpoint, error_code &ec) override { ec = ERR_UNSUPPORTED; }
-	virtual void async_bind(const endpoint &endpoint, null_callback &&complete_handler) override { complete_handler(ERR_UNSUPPORTED); }
+	virtual void bind(const endpoint &endpoint, error_code &ec) override { ec = 0; }
+	virtual void async_bind(const endpoint &endpoint, null_callback &&complete_handler) override { complete_handler(0); }
 
 	virtual void listen(error_code &ec) override { ec = 0; }
 	virtual void async_listen(null_callback &&complete_handler) override { complete_handler(0); }
 
-	virtual void accept(std::unique_ptr<prx_tcp_socket> &socket, error_code &err) override;
+	virtual void accept(std::unique_ptr<prx_tcp_socket> &socket, error_code &ec) override { ec = ERR_UNSUPPORTED; }
 	virtual void async_accept(accept_callback &&complete_handler) override;
 
 	virtual void close(error_code &ec) override { ec = 0; }

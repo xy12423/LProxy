@@ -2,7 +2,7 @@
 #include "LoadBalancingSocket.h"
 #include "LoadBalancingManager.h"
 
-void LoadBalancingSocket::async_connect(const endpoint &ep, null_callback &&complete_handler)
+void LoadBalancingSocket::async_connect(const endpoint &, null_callback &&complete_handler)
 {
 	std::shared_ptr<null_callback> callback = std::make_shared<null_callback>(std::move(complete_handler));
 	parent_.AsyncConnect([this, callback](error_code err, uint32_t vConnId)
@@ -102,7 +102,7 @@ void LoadBalancingSocket::async_read(const std::shared_ptr<mutable_buffer_sequen
 
 void LoadBalancingSocket::async_write(const_buffer_sequence &&buffer, null_callback &&complete_handler)
 {
-	std::shared_ptr<std::vector<char>> data = std::make_shared<std::vector<char>>(buffer);
+	std::shared_ptr<std::vector<char>> data = std::make_shared<std::vector<char>>();
 	data->resize(buffer.size_total());
 	buffer.gather(data->data(), data->size());
 	std::shared_ptr<null_callback> callback = std::make_shared<null_callback>(std::move(complete_handler));
