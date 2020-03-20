@@ -150,6 +150,8 @@ class LoadBalancingManager
 		bool inQueue_ = false, shutdownTimerSet_ = false, closed_ = false;
 	};
 public:
+	LoadBalancingManager(asio::io_context &ioCtx) :ioContext_(ioCtx) {}
+
 	void AsyncConnect(std::function<void(error_code, uint32_t)> &&completeHandler);
 	void AsyncAccept(std::function<void(error_code, uint32_t)> &&completeHandler);
 
@@ -159,6 +161,7 @@ public:
 	void Shutdown(uint32_t vConnId);
 
 	void NewConnection(size_t index, std::unique_ptr<prx_tcp_socket> &&socket, uint16_t rtt);
+	virtual void OnConnectionReset(size_t index) {}
 private:
 	void AppendPendingSendSegment(uint32_t virtualConnectionId);
 	void DispatchPendingSendSegment();
@@ -171,8 +174,6 @@ private:
 
 	std::shared_ptr<BaseConnection> OccupyConnection();
 	void ReleaseConnection(std::shared_ptr<BaseConnection> &&conn, bool failed);
-
-	virtual void OnConnectionReset(size_t index) {}
 
 	asio::io_context &ioContext_;
 

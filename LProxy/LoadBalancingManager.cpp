@@ -625,12 +625,11 @@ void LoadBalancingManager::Shutdown(uint32_t vConnId)
 {
 	std::unique_lock<std::recursive_mutex> generalLock(generalMutex_);
 	auto itr = virtualConnections_.find(vConnId);
-	if (itr != virtualConnections_.end())
-	{
-		std::shared_ptr<VirtualConnection> virtualConnection = itr->second;
-		generalLock.unlock();
-		virtualConnection->Shutdown();
-	}
+	if (itr == virtualConnections_.end())
+		return;
+	std::shared_ptr<VirtualConnection> virtualConnection = itr->second;
+	generalLock.unlock();
+	virtualConnection->Shutdown();
 }
 
 void LoadBalancingManager::NewConnection(size_t index, std::unique_ptr<prx_tcp_socket>&& socket, uint16_t rtt)
