@@ -5,9 +5,9 @@
 VConnID 4b 0
 Seq     4b 4
 Ack     4b 8
-Flags   1b 12
-Wnd     1b 13
-Len     2b 14
+Flags   2b 12
+Wnd     2b 14
+Len     2b 16
 */
 
 std::mutex logMutex;
@@ -42,39 +42,41 @@ void LoadBalancingManager::VirtualConnection::AsyncSendData(const const_buffer &
 	});
 }
 
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler)
+void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler)
 {
 	thread_local std::vector<char> segmentData;
 	//Construct segment (except seq, ack and wnd)
-	segmentData.resize(16 + payloadSize);
+	segmentData.resize(kHeaderSize + payloadSize);
 	char *data = segmentData.data();
 	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
 	memcpy(data, &virtualConnectionIdLE, 4);
-	data[12] = flags;
+	uint16_t flagsLE = boost::endian::native_to_little(flags);
+	memcpy(data + 12, &flagsLE, 2);
 	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
-	memcpy(data + 14, &payloadSizeLE, 2);
-	memcpy(data + 16, payload, payloadSize);
+	memcpy(data + 16, &payloadSizeLE, 2);
+	memcpy(data + kHeaderSize, payload, payloadSize);
 	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
 }
 
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler)
+void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler)
 {
 	thread_local std::vector<char> segmentData;
 	//Construct segment (except seq, ack and wnd)
 	static_assert(kMaxSegmentSize < 0x10000, "kMaxSegmentSize too big");
 	uint16_t payloadSize = (uint16_t)std::min(payload.size_total(), kMaxSegmentSize);
-	segmentData.resize(16 + payloadSize);
+	segmentData.resize(kHeaderSize + payloadSize);
 	char *data = segmentData.data();
 	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
 	memcpy(data, &virtualConnectionIdLE, 4);
-	data[12] = flags;
+	uint16_t flagsLE = boost::endian::native_to_little(flags);
+	memcpy(data + 12, &flagsLE, 2);
 	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
-	memcpy(data + 14, &payloadSizeLE, 2);
+	memcpy(data + 16, &payloadSizeLE, 2);
 	payload.gather(data + 16, payloadSize);
 	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
 }
 
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint8_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler)
+void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed_)
@@ -235,26 +237,27 @@ void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_pt
 
 		uint32_t sendSegmentId = sendSegmentIdNext_;
 		sendingSegment = std::make_shared<SendSegment>(ioContext_, sendSegmentId, true);
-		sendingSegment->data.resize(16);
+		sendingSegment->data.resize(kHeaderSize);
 		char *data = sendingSegment->data.data();
 		uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
 		memcpy(data, &virtualConnectionIdLE, 4);
 		uint32_t sendSegmentIdNextLE = boost::endian::native_to_little(sendSegmentId);
 		memcpy(data + 4, &sendSegmentIdNextLE, 4);
 		data[12] = ACK;
-		data[14] = data[15] = 0;
+		data[13] = data[14] = data[15] = 0;
 	}
 
 	uint32_t ackLE = boost::endian::native_to_little(receiveSegmentIdOffset_ + receiveSegmentComplete_);
-	assert(sendingSegment->data.size() >= 16);
+	assert(sendingSegment->data.size() >= kHeaderSize);
 	memcpy(sendingSegment->data.data() + 8, &ackLE, 4);
-	sendingSegment->data[13] = (uint8_t)(kMaxWindowSize - receiveSegmentComplete_ - 1);
+	uint16_t wndLE = boost::endian::native_to_little((uint16_t)(kMaxWindowSize - receiveSegmentComplete_ - 1));
+	memcpy(sendingSegment->data.data() + 14, &wndLE, 2);
 
 	sendingSegment->state = SendSegment::SENT;
 	++sendingSegment->tryCount;
 	if (!sendingSegment->isAcknowledgement) //ACK doesn't need retransmission
 	{
-		sendingSegment->retryTimer.expires_after(std::chrono::milliseconds(std::min(kTimeRetryMin, connection->RTT()) * sendingSegment->tryCount));
+		sendingSegment->retryTimer.expires_after(std::chrono::milliseconds(timeOut(connection->RTT(), sendingSegment->tryCount)));
 		sendingSegment->timeTry = std::chrono::steady_clock::now();
 		if (sendingSegment->tryCount == 1)
 			sendingSegment->timeStart = sendingSegment->timeTry;
@@ -303,6 +306,7 @@ void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared
 		return;
 	if (sendingSegment->state != SendSegment::SENT || sendingSegment->tryCount != tryCount) //Prevents re-retransmission
 		return;
+	if (tryCount >= 4)
 	{
 		auto timeEnd = std::chrono::steady_clock::now();
 		std::lock_guard<std::mutex> logLock(logMutex);
@@ -360,8 +364,11 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	boost::endian::little_to_native_inplace(seq);
 	memcpy(&ack, data + 8, 4);
 	boost::endian::little_to_native_inplace(ack);
-	uint8_t flags = data[12];
-	uint8_t wnd = data[13];
+	uint16_t flags, wnd;
+	memcpy(&flags, data + 12, 2);
+	boost::endian::little_to_native_inplace(flags);
+	memcpy(&wnd, data + 14, 2);
+	boost::endian::little_to_native_inplace(wnd);
 
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed_)
@@ -379,7 +386,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 				break;
 			segment->state = SendSegment::ACKNOWLEDGED;
 			segment->retryTimer.cancel();
-			if (segment->tryCount > 1)
+			if (segment->tryCount >= 4)
 			{
 				auto timeEnd = std::chrono::steady_clock::now();
 				std::lock_guard<std::mutex> logLock(logMutex);
@@ -448,7 +455,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 			auto &receiveSegment = receiveSegments_[segmentIndex];
 			if (receiveSegment.ok)
 			{
-				if (receiveSegment.flags != flags || receiveSegment.data.size() != size - 16)
+				if (receiveSegment.flags != flags || receiveSegment.data.size() != size - kHeaderSize)
 				{
 					lock.unlock();
 					Reset();
@@ -460,7 +467,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 				//Received new segment
 				receiveSegment.ok = true;
 				receiveSegment.flags = flags;
-				receiveSegment.data.assign(data + 16, data + size);
+				receiveSegment.data.assign(data + kHeaderSize, data + size);
 				if (segmentIndex + 1 > receiveSegmentCount_)
 					receiveSegmentCount_ = segmentIndex + 1;
 
@@ -783,7 +790,7 @@ void LoadBalancingManager::DispatchPendingSendSegment()
 
 void LoadBalancingManager::ReceiveSegment(const std::shared_ptr<BaseConnection> &receiveSocket)
 {
-	receiveSocket->socket->async_read(mutable_buffer(receiveSocket->receiveBuffer, 16),
+	receiveSocket->socket->async_read(mutable_buffer(receiveSocket->receiveBuffer, kHeaderSize),
 		[this, receiveSocket](error_code err)
 	{
 		if (err)
@@ -792,7 +799,7 @@ void LoadBalancingManager::ReceiveSegment(const std::shared_ptr<BaseConnection> 
 			return;
 		}
 		uint16_t len;
-		memcpy(&len, receiveSocket->receiveBuffer + 14, 2);
+		memcpy(&len, receiveSocket->receiveBuffer + 16, 2);
 		boost::endian::little_to_native_inplace(len);
 		if (len == 0)
 		{
@@ -801,7 +808,7 @@ void LoadBalancingManager::ReceiveSegment(const std::shared_ptr<BaseConnection> 
 		}
 		else
 		{
-			receiveSocket->socket->async_read(mutable_buffer(receiveSocket->receiveBuffer + 16, len),
+			receiveSocket->socket->async_read(mutable_buffer(receiveSocket->receiveBuffer + kHeaderSize, len),
 				[this, receiveSocket, len](error_code err)
 			{
 				if (err)
@@ -826,7 +833,9 @@ void LoadBalancingManager::EndReceiveSegment(const std::shared_ptr<BaseConnectio
 	auto itr = virtualConnections_.find(vConnId);
 	if (itr == virtualConnections_.end())
 	{
-		uint8_t flags = receiveSocket->receiveBuffer[12];
+		uint16_t flags;
+		memcpy(&flags, receiveSocket->receiveBuffer + 12, 2);
+		boost::endian::little_to_native_inplace(flags);
 		if (flags & RST)
 			return;
 		if (!(flags & SYN))
@@ -853,7 +862,7 @@ void LoadBalancingManager::EndReceiveSegment(const std::shared_ptr<BaseConnectio
 		virtualConnection = itr->second;
 	}
 	generalLock.unlock();
-	virtualConnection->OnReceiveSegment(receiveSocket->receiveBuffer, 16 + len);
+	virtualConnection->OnReceiveSegment(receiveSocket->receiveBuffer, kHeaderSize + len);
 }
 
 void LoadBalancingManager::EndReceiveSegmentWithError(const std::shared_ptr<BaseConnection> &receiveSocket)

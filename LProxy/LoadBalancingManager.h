@@ -11,6 +11,7 @@ class LoadBalancingManager
 	};
 
 	static constexpr size_t kAcceptQueueMax = 8;
+	static constexpr size_t kHeaderSize = 18;
 
 	struct BaseConnection
 	{
@@ -23,7 +24,7 @@ class LoadBalancingManager
 		const std::unique_ptr<prx_tcp_socket> socket;
 		uint16_t rtt; //In milliseconds
 
-		char receiveBuffer[0x10010];
+		char receiveBuffer[kHeaderSize + 0x10000];
 	};
 
 	struct Connection
@@ -54,8 +55,13 @@ class LoadBalancingManager
 
 		static constexpr uint16_t kTimeRetryMin = 100;
 		static constexpr auto kTimeShutdownWait = std::chrono::seconds(10);
-		static constexpr uint16_t kMaxWindowSize = 32;
+		static constexpr uint16_t kMaxWindowSize = 8;
 		static constexpr size_t kMaxSegmentSize = 4096;
+
+		static constexpr uint16_t timeOut(uint16_t rtt, size_t tryCount)
+		{
+			return std::min(kTimeRetryMin, rtt) * (tryCount <= 4 ? tryCount : (1 << (tryCount - 2)));
+		}
 
 		enum
 		{
@@ -82,7 +88,7 @@ class LoadBalancingManager
 			const uint32_t segmentId;
 			const bool isAcknowledgement;
 
-			uint8_t state = READY;
+			uint16_t state = READY;
 			boost::asio::steady_timer retryTimer;
 			size_t tryCount = 0;
 
@@ -94,7 +100,7 @@ class LoadBalancingManager
 		struct ReceiveSegment
 		{
 			bool ok = false;
-			uint8_t flags = 0;
+			uint16_t flags = 0;
 
 			std::vector<char> data;
 		};
@@ -119,10 +125,10 @@ class LoadBalancingManager
 		void ShutdownReceive();
 		void Reset();
 	private:
-		void AppendSendSegment(uint8_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler);
-		void AppendSendSegment(uint8_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler);
+		void AppendSendSegment(uint16_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler);
+		void AppendSendSegment(uint16_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler);
 		//DO NOT DIRECTLY CALL THIS
-		void AppendSendSegment(uint8_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler);
+		void AppendSendSegment(uint16_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler);
 		void BeginSendSegment();
 		void BeginSendSegmentAck();
 		void RetrySendSegment(const std::shared_ptr<SendSegment> &sendingSegment, size_t tryCount);
@@ -137,7 +143,7 @@ class LoadBalancingManager
 
 		std::vector<std::shared_ptr<SendSegment>> sendSegments_;
 		uint32_t sendSegmentIdNext_ = 0, sendLaskAck_ = -1;
-		uint8_t sendWindow_ = 1;
+		uint16_t sendWindow_ = 1;
 		SegmentCallback sendCallback_; //Set if sendSegments_ is full before appended, Called after sendSegments_ is not full
 		uint32_t sendSegmentIdPending_ = -1;
 
