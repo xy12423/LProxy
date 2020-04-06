@@ -13,6 +13,28 @@ class LoadBalancingManager
 	static constexpr size_t kAcceptQueueMax = 8;
 	static constexpr size_t kHeaderSize = 18;
 
+	class LoopInteger
+	{
+	public:
+		LoopInteger() :val_(0) {}
+		LoopInteger(uint32_t val) :val_(val) {}
+		uint32_t value() const { return val_; }
+
+		template <typename T> LoopInteger operator+(T ropand) const { return LoopInteger(val_ + ropand); }
+		uint32_t operator-(const LoopInteger &ropand) const { return val_ - ropand.val_; }
+		template <typename T> LoopInteger &operator+=(T ropand) { val_ += ropand; return *this; }
+		template <typename T> LoopInteger &operator-=(T ropand) { val_ -= ropand; return *this; }
+
+		bool operator<(const LoopInteger &rhs) const { return (val_ - rhs.val_) & 0x80000000; }
+		bool operator>(const LoopInteger &rhs) const { return (rhs.val_ - val_) & 0x80000000; }
+		bool operator<=(const LoopInteger &rhs) const { return !((rhs.val_ - val_) & 0x80000000); }
+		bool operator>=(const LoopInteger &rhs) const { return !((val_ - rhs.val_) & 0x80000000); }
+		bool operator==(const LoopInteger &rhs) const { return val_ == rhs.val_; }
+		bool operator!=(const LoopInteger &rhs) const { return val_ != rhs.val_; }
+	private:
+		uint32_t val_;
+	};
+
 	struct BaseConnection
 	{
 		BaseConnection() = default;
@@ -51,58 +73,116 @@ class LoadBalancingManager
 
 	class VirtualConnection : public std::enable_shared_from_this<VirtualConnection>
 	{
+		class StreamWindowBuffer
+		{
+			static constexpr size_t kBlockSize = 0x1000, kMaxBlockCount = 0x2000;
+			struct StreamWindowBufferBlock
+			{
+				char data[kBlockSize];
+			};
+		public:
+			enum : unsigned int
+			{
+				START_BIT = 0x01,
+				STOP_BIT  = 0x02,
+
+				EOS_BIT   = 0x04
+			};
+
+			bool Empty() const { return buffers_.empty() && (specialBits_ & (START_BIT | STOP_BIT)) == 0; }
+			bool Full() const { return buffers_.size() >= kMaxBlockCount; }
+			bool Stopped() const { return specialBits_ & STOP_BIT; }
+			bool EndOfStream() const { return specialBits_ & EOS_BIT; }
+
+			size_t DataSize() const
+			{
+				return (buffers_.size() - 1) * kBlockSize - bufferFrontBegin_ + bufferBackEnd_;
+			}
+			LoopInteger WindowBegin() const { return streamOffset_; }
+			size_t WindowSize() const
+			{
+				size_t windowSize = DataSize();
+				if (specialBits_ & START_BIT)
+					++windowSize;
+				if (specialBits_ & STOP_BIT)
+					++windowSize;
+				return windowSize;
+			}
+			LoopInteger WindowEnd() const { return WindowBegin() + WindowSize(); }
+			LoopInteger MaxReadSegmentEnd(LoopInteger segmentBegin, size_t bufferSize) const;
+
+			void Reset(LoopInteger streamBegin);
+			void Stop();
+			void StopForce();
+
+			LoopInteger Progress(LoopInteger streamPosition);
+			LoopInteger Reserve(LoopInteger streamPosition);
+			size_t Append(const char *src, size_t srcSize);
+			size_t Consume(char *dst, size_t dstSize, uint8_t &specialBits, LoopInteger stopAt);
+			size_t CopyFrom(LoopInteger dstStreamPosition, const char *src, size_t srcSize);
+			size_t CopyTo(LoopInteger srcStreamPosition, char *dst, size_t dstSize, uint8_t &specialBits) const;
+		private:
+			std::pair<size_t, size_t> BlockIndex(uint32_t streamPositionDiff) const { return std::make_pair((streamPositionDiff + bufferFrontBegin_) / kBlockSize, (streamPositionDiff + bufferFrontBegin_) % kBlockSize); }
+			bool BlockIndexNotOverflow(const std::pair<size_t, size_t> &blockIndex) const { return blockIndex.first + 1 < buffers_.size() || (blockIndex.first + 1 == buffers_.size() && blockIndex.second < bufferBackEnd_); }
+
+			std::deque<StreamWindowBufferBlock> buffers_;
+			size_t bufferFrontBegin_ = 0, bufferBackEnd_ = kBlockSize;
+			LoopInteger streamOffset_ = 0;
+			uint8_t specialBits_ = START_BIT;
+		};
+
 		using SegmentCallback = null_callback;
 
 		static constexpr uint16_t kTimeRetryMin = 100;
 		static constexpr auto kTimeShutdownWait = std::chrono::seconds(10);
-		static constexpr uint16_t kMaxWindowSize = 8;
 		static constexpr size_t kMaxSegmentSize = 4096;
 
 		static constexpr uint16_t timeOut(uint16_t rtt, size_t tryCount)
 		{
-			return std::min(kTimeRetryMin, rtt) * (tryCount <= 4 ? tryCount : (1 << (tryCount - 2)));
+			return (uint16_t)(std::min(kTimeRetryMin, rtt) * (tryCount <= 4 ? tryCount : (1 << (tryCount - 2))));
 		}
 
-		enum
+		enum : unsigned int
 		{
 			SHUTDOWN_SEND     = 0x01,
 			SHUTDOWN_RECEIVE  = 0x02,
-			SHUTDOWN_BOTH     = SHUTDOWN_SEND | SHUTDOWN_RECEIVE,
 			SHUTDOWN_SENT     = 0x04,
-			SHUTDOWN_COMPLETE = SHUTDOWN_BOTH | SHUTDOWN_SENT,
 			SHUTDOWN_FORCE    = 0x08,
+			SHUTDOWN_BOTH     = SHUTDOWN_SEND | SHUTDOWN_RECEIVE,
+			SHUTDOWN_COMPLETE = SHUTDOWN_SEND | SHUTDOWN_RECEIVE | SHUTDOWN_SENT,
 			SHUTDOWN_RESET    = SHUTDOWN_COMPLETE | SHUTDOWN_FORCE,
 		};
 
 		struct SendSegment
 		{
-			SendSegment(asio::io_context &ioCtx, uint32_t segId, bool isAck) :segmentId(segId), isAcknowledgement(isAck), retryTimer(ioCtx) {}
+			SendSegment(asio::io_context &ioCtx, LoopInteger segBegin, LoopInteger segEnd, std::vector<char> &&segData, bool isAck)
+				:segmentBegin(segBegin), segmentEnd(segEnd), data(std::move(segData)), isAcknowledgement(isAck), retryTimer(ioCtx)
+			{
+			}
 
 			enum
 			{
 				READY,
-				SENT,
+				INFLIGHT,
 				ACKNOWLEDGED,
 			};
 
-			const uint32_t segmentId;
+			const LoopInteger segmentBegin, segmentEnd;
+			const std::vector<char> data;
 			const bool isAcknowledgement;
 
 			uint16_t state = READY;
 			boost::asio::steady_timer retryTimer;
-			size_t tryCount = 0;
-
-			std::chrono::steady_clock::time_point timeStart, timeTry;
-
-			std::vector<char> data; //Contains complete segment including header with ACK left empty(will be filled when sending)
 		};
 
 		struct ReceiveSegment
 		{
-			bool ok = false;
-			uint16_t flags = 0;
+			ReceiveSegment(uint32_t segBegin, uint32_t segEnd)
+				:segmentBegin(segBegin), segmentEnd(segEnd)
+			{
+			}
 
-			std::vector<char> data;
+			LoopInteger segmentBegin, segmentEnd;
 		};
 	public:
 		VirtualConnection(uint32_t vConnId, asio::io_context &ioCtx, LoadBalancingManager &parent_)
@@ -125,31 +205,28 @@ class LoadBalancingManager
 		void ShutdownReceive();
 		void Reset();
 	private:
-		void AppendSendSegment(uint16_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler);
-		void AppendSendSegment(uint16_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler);
-		//DO NOT DIRECTLY CALL THIS
-		void AppendSendSegment(uint16_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler);
+		uint32_t SendWindowSize();
+		uint32_t SendAckValue();
 		void BeginSendSegment();
-		void BeginSendSegmentAck();
-		void RetrySendSegment(const std::shared_ptr<SendSegment> &sendingSegment, size_t tryCount);
+		void BeginSendSegmentForce();
+		void RetrySendSegment(const std::shared_ptr<SendSegment> &sendingSegment);
 
 		//Returns whether receive window is changed
 		bool ConsumeReceiveSegment(char *dst, size_t dstSize, size_t &transferred);
-		bool ConsumeReceiveSegmentEmpty();
 
 		void ShutdownCheck();
 
 		const uint32_t virtualConnectionId_;
 
-		std::vector<std::shared_ptr<SendSegment>> sendSegments_;
-		uint32_t sendSegmentIdNext_ = 0, sendLaskAck_ = -1;
-		uint16_t sendWindow_ = 1;
-		SegmentCallback sendCallback_; //Set if sendSegments_ is full before appended, Called after sendSegments_ is not full
-		uint32_t sendSegmentIdPending_ = -1;
+		StreamWindowBuffer sendBuffer_;
+		uint16_t sendSlidingWindow_ = 0;
+		uint32_t sendCongestionWindow_ = 0;
+		std::chrono::steady_clock::time_point sendLastAckReceivedTime_ = std::chrono::steady_clock::now();
+		std::vector<std::shared_ptr<SendSegment>> sendSegmentsInFlight_;
+		SegmentCallback sendCallback_; //Set if sendBuffer_ is full before appended, Called after sendBuffer_ is not full
 
-		ReceiveSegment receiveSegments_[kMaxWindowSize];
-		uint32_t receiveSegmentIdOffset_ = 0, receiveSegmentComplete_ = -1, receiveSegmentCount_ = 0;
-		size_t receiveSegmentDataOffset_ = 0;
+		StreamWindowBuffer receiveBuffer_;
+		std::deque<ReceiveSegment> receiveSegmentsOk_;
 		SegmentCallback receiveCallback_; //Blocks if receiveSegments_ is empty, Called after new data appeared
 
 		asio::io_context &ioContext_;

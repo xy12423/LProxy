@@ -20,131 +20,395 @@ inline static void SafeCallback(T &callback, TArgs &&...args)
 	func(std::forward<TArgs>(args)...);
 }
 
+LoadBalancingManager::LoopInteger LoadBalancingManager::VirtualConnection::StreamWindowBuffer::MaxReadSegmentEnd(LoopInteger segmentBegin, size_t bufferSize) const
+{
+	if (specialBits_ & EOS_BIT)
+		return segmentBegin;
+
+	LoopInteger windowBegin = WindowBegin();
+	LoopInteger dataBegin = windowBegin + (specialBits_ & START_BIT ? 1 : 0);
+	LoopInteger dataEnd = dataBegin + DataSize();
+	LoopInteger windowEnd = dataEnd + (specialBits_ & STOP_BIT ? 1 : 0);
+
+	if (segmentBegin < windowBegin)
+		return segmentBegin;
+	if (segmentBegin >= windowEnd)
+		return segmentBegin;
+
+	if (segmentBegin < dataBegin)
+		segmentBegin = dataBegin;
+	LoopInteger segmentEnd = segmentBegin + bufferSize;
+	if (segmentEnd >= dataEnd)
+		return windowEnd;
+	return segmentEnd;
+}
+
+void LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Reset(LoopInteger streamBegin)
+{
+	streamOffset_ = streamBegin;
+	bufferFrontBegin_ = 0;
+	bufferBackEnd_ = kBlockSize;
+	specialBits_ = START_BIT;
+}
+
+void LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Stop()
+{
+	specialBits_ |= STOP_BIT;
+}
+
+void LoadBalancingManager::VirtualConnection::StreamWindowBuffer::StopForce()
+{
+	specialBits_ = EOS_BIT;
+}
+
+LoadBalancingManager::LoopInteger LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Progress(LoopInteger streamPosition)
+{
+	if (specialBits_ & EOS_BIT)
+		return streamOffset_;
+	if (streamPosition <= streamOffset_)
+		return streamOffset_;
+
+	if (specialBits_ & START_BIT)
+	{
+		specialBits_ &= ~START_BIT;
+		streamOffset_ += 1;
+		if (streamPosition == streamOffset_)
+			return streamPosition;
+	}
+	auto blockIndex = BlockIndex(streamPosition - streamOffset_);
+	if (BlockIndexNotOverflow(blockIndex))
+	{
+		assert(kBlockSize * blockIndex.first + blockIndex.second - bufferFrontBegin_ == streamPosition - streamOffset_);
+		buffers_.erase(buffers_.begin(), buffers_.begin() + blockIndex.first);
+		bufferFrontBegin_ = blockIndex.second;
+		streamOffset_ = streamPosition;
+	}
+	else
+	{
+		streamOffset_ += DataSize();
+		buffers_.clear();
+		bufferFrontBegin_ = 0;
+		bufferBackEnd_ = kBlockSize;
+
+		if (streamPosition != streamOffset_ && (specialBits_ & STOP_BIT))
+		{
+			specialBits_ &= ~STOP_BIT;
+			streamOffset_ += 1;
+			specialBits_ |= EOS_BIT;
+		}
+	}
+	return streamOffset_;
+}
+
+LoadBalancingManager::LoopInteger LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Reserve(LoopInteger streamPosition)
+{
+	if (specialBits_ & EOS_BIT)
+		return streamOffset_;
+	LoopInteger streamDataOffset = streamOffset_ + (specialBits_ & START_BIT ? 1 : 0);
+	if (streamPosition <= streamDataOffset)
+		return streamDataOffset;
+
+	auto blockIndexLastByte = BlockIndex(streamPosition - streamDataOffset - 1);
+	if (BlockIndexNotOverflow(blockIndexLastByte))
+	{
+		return streamPosition;
+	}
+	else if (specialBits_ & STOP_BIT)
+	{
+		return streamDataOffset + DataSize();
+	}
+	else if (blockIndexLastByte.first < kMaxBlockCount)
+	{
+		buffers_.resize(blockIndexLastByte.first + 1);
+		bufferBackEnd_ = blockIndexLastByte.second + 1;
+		return streamPosition;
+	}
+	else
+	{
+		buffers_.resize(kMaxBlockCount);
+		bufferBackEnd_ = kBlockSize;
+		return streamDataOffset + DataSize();
+	}
+}
+
+size_t LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Append(const char *src, size_t srcSize)
+{
+	if (specialBits_ & (EOS_BIT | STOP_BIT))
+		return 0;
+
+	size_t srcSizeOrigin = srcSize;
+	if (bufferBackEnd_ < kBlockSize)
+	{
+		size_t copying = std::min(kBlockSize - bufferBackEnd_, srcSize);
+		memcpy(buffers_.back().data + bufferBackEnd_, src, copying);
+		bufferBackEnd_ += copying;
+		src += copying;
+		srcSize -= copying;
+	}
+	while (srcSize > 0 && buffers_.size() < kMaxBlockCount)
+	{
+		buffers_.emplace_back();
+		size_t copying = std::min(kBlockSize, srcSize);
+		memcpy(buffers_.back().data, src, copying);
+		bufferBackEnd_ = copying;
+		src += copying;
+		srcSize -= copying;
+	}
+	return srcSizeOrigin - srcSize;
+}
+
+size_t LoadBalancingManager::VirtualConnection::StreamWindowBuffer::Consume(char *dst, size_t dstSize, uint8_t &specialBits, LoopInteger stopAt)
+{
+	if (specialBits_ & EOS_BIT)
+	{
+		specialBits = EOS_BIT;
+		return 0;
+	}
+	specialBits = 0;
+	if (stopAt <= streamOffset_)
+		return 0;
+	if (specialBits_ & START_BIT)
+	{
+		specialBits |= START_BIT;
+		specialBits_ &= ~START_BIT;
+		streamOffset_ += 1;
+		if (stopAt == streamOffset_)
+			return 0;
+	}
+	auto blockIndex = BlockIndex(stopAt - streamOffset_);
+	size_t dstSizeOrigin = dstSize;
+	if (BlockIndexNotOverflow(blockIndex))
+	{
+		while (blockIndex.first > 0 && dstSize > 0)
+		{
+			if (kBlockSize - bufferFrontBegin_ <= dstSize)
+			{
+				size_t copying = kBlockSize - bufferFrontBegin_;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				buffers_.pop_front();
+				--blockIndex.first;
+				bufferFrontBegin_ = 0;
+				dst += copying;
+				dstSize -= copying;
+			}
+			else
+			{
+				size_t copying = dstSize;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				bufferFrontBegin_ += copying;
+				dst += copying;
+				dstSize = 0;
+			}
+		}
+		if (dstSize > 0)
+		{
+			size_t copying = std::min(dstSize, blockIndex.second - bufferFrontBegin_);
+			memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+			bufferFrontBegin_ += copying;
+			dst += copying;
+			dstSize -= copying;
+		}
+		streamOffset_ += dstSizeOrigin - dstSize;
+	}
+	else
+	{
+		while (buffers_.size() > 1 && dstSize > 0)
+		{
+			if (kBlockSize - bufferFrontBegin_ <= dstSize)
+			{
+				size_t copying = kBlockSize - bufferFrontBegin_;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				buffers_.pop_front();
+				bufferFrontBegin_ = 0;
+				dst += copying;
+				dstSize -= copying;
+			}
+			else
+			{
+				size_t copying = dstSize;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				bufferFrontBegin_ += copying;
+				dst += copying;
+				dstSize = 0;
+			}
+		}
+		if (!buffers_.empty() && dstSize > 0)
+		{
+			assert(buffers_.size() == 1);
+			if (bufferBackEnd_ - bufferFrontBegin_ <= dstSize)
+			{
+				size_t copying = bufferBackEnd_ - bufferFrontBegin_;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				buffers_.pop_front();
+				bufferFrontBegin_ = 0;
+				bufferBackEnd_ = kBlockSize;
+				dst += copying;
+				dstSize -= copying;
+			}
+			else
+			{
+				size_t copying = dstSize;
+				memcpy(dst, buffers_.front().data + bufferFrontBegin_, copying);
+				bufferFrontBegin_ += copying;
+				dst += copying;
+				dstSize = 0;
+			}
+		}
+		streamOffset_ += dstSizeOrigin - dstSize;
+		if (buffers_.empty() && (specialBits_ & STOP_BIT))
+		{
+			specialBits |= STOP_BIT;
+			specialBits_ &= ~STOP_BIT;
+			streamOffset_ += 1;
+			specialBits_ |= EOS_BIT;
+		}
+	}
+	return dstSizeOrigin - dstSize;
+}
+
+size_t LoadBalancingManager::VirtualConnection::StreamWindowBuffer::CopyFrom(LoopInteger dstStreamPosition, const char *src, size_t srcSize)
+{
+	if (specialBits_ & EOS_BIT)
+		return 0;
+	LoopInteger streamDataOffset = streamOffset_ + (specialBits_ & START_BIT ? 1 : 0);
+	if (dstStreamPosition < streamDataOffset)
+	{
+		if (streamDataOffset - dstStreamPosition > 0x20000000) // Seriously out of range
+			throw std::out_of_range("StreamWindowBuffer::CopyFrom: dstStreamPosition out of range");
+		uint32_t skipSize = streamDataOffset - dstStreamPosition;
+		if (srcSize <= skipSize)
+			return srcSize;
+		dstStreamPosition = streamDataOffset;
+		src += skipSize;
+		srcSize -= skipSize;
+	}
+	auto blockIndex = BlockIndex(dstStreamPosition - streamDataOffset);
+	if (!BlockIndexNotOverflow(blockIndex))
+		throw std::out_of_range("StreamWindowBuffer::CopyFrom: dstStreamPosition out of range");
+
+	size_t srcSizeOrigin = srcSize;
+	auto bufferItr = buffers_.begin() + blockIndex.first, bufferItrEnd = --buffers_.end();
+	while (bufferItr != bufferItrEnd && srcSize > 0)
+	{
+		size_t copying = std::min(kBlockSize - blockIndex.second, srcSize);
+		memcpy(bufferItr->data + blockIndex.second, src, copying);
+		++bufferItr;
+		blockIndex.second = 0;
+		src += copying;
+		srcSize -= copying;
+	}
+	if (srcSize > 0)
+	{
+		size_t copying = std::min(bufferBackEnd_ - blockIndex.second, srcSize);
+		memcpy(bufferItr->data + blockIndex.second, src, copying);
+		src += copying;
+		srcSize -= copying;
+	}
+	return srcSizeOrigin - srcSize;
+}
+
+size_t LoadBalancingManager::VirtualConnection::StreamWindowBuffer::CopyTo(LoopInteger srcStreamPosition, char *dst, size_t dstSize, uint8_t &specialBits) const
+{
+	if (specialBits_ & EOS_BIT)
+	{
+		specialBits = EOS_BIT;
+		return 0;
+	}
+	specialBits = 0;
+	LoopInteger streamDataOffset = streamOffset_;
+	if (specialBits_ & START_BIT)
+	{
+		if (srcStreamPosition == streamDataOffset)
+			specialBits |= START_BIT;
+		else
+			streamDataOffset += 1;
+	}
+	if (srcStreamPosition < streamDataOffset)
+		throw std::out_of_range("StreamWindowBuffer::CopyTo: srcStreamPosition out of range");
+	auto blockIndex = BlockIndex(srcStreamPosition - streamDataOffset);
+	if (!BlockIndexNotOverflow(blockIndex))
+		throw std::out_of_range("StreamWindowBuffer::CopyTo: dstStreamPosition out of range");
+
+	size_t dstSizeOrigin = dstSize;
+	auto bufferItr = buffers_.begin() + blockIndex.first, bufferItrEnd = --buffers_.end();
+	while (bufferItr != bufferItrEnd && dstSize > 0)
+	{
+		size_t copying = std::min(dstSize, kBlockSize - blockIndex.second);
+		memcpy(dst, bufferItr->data + blockIndex.second, copying);
+		++bufferItr;
+		blockIndex.second = 0;
+		dst += copying;
+		dstSize -= copying;
+	}
+	if (dstSize > 0)
+	{
+		size_t copying = std::min(dstSize, bufferBackEnd_ - blockIndex.second);
+		memcpy(dst, bufferItr->data + blockIndex.second, copying);
+		dst += copying;
+		dstSize -= copying;
+		if ((specialBits_ & STOP_BIT) && copying == bufferBackEnd_ - blockIndex.second)
+			specialBits |= STOP_BIT;
+	}
+	return dstSizeOrigin - dstSize;
+}
+
+uint32_t LoadBalancingManager::VirtualConnection::SendWindowSize()
+{
+	//TODO: Better way to determine RTT?
+	if (std::chrono::steady_clock::now() - sendLastAckReceivedTime_ > std::chrono::milliseconds(200))
+		return std::min(std::max<uint32_t>(sendSlidingWindow_, 16), sendCongestionWindow_);
+	return sendCongestionWindow_;
+}
+
+uint32_t LoadBalancingManager::VirtualConnection::SendAckValue()
+{
+	if (receiveSegmentsOk_.empty())
+		return receiveBuffer_.WindowEnd().value();
+	if (receiveSegmentsOk_.front().segmentBegin <= receiveBuffer_.WindowBegin())
+		return receiveSegmentsOk_.front().segmentEnd.value();
+	return receiveBuffer_.WindowBegin().value();
+}
+
 void LoadBalancingManager::VirtualConnection::AsyncStart(null_callback &&completeHandler)
 {
-	AppendSendSegment(SYN, nullptr, 0, std::move(completeHandler));
+	std::unique_lock<std::recursive_mutex> lock(mutex_);
+	sendBuffer_.Reset(0);
+	lock.unlock();
+	BeginSendSegmentForce();
+	completeHandler(0);
 }
 
 void LoadBalancingManager::VirtualConnection::AsyncSendData(const const_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
 {
-	std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
-	static_assert(kMaxSegmentSize < 0x10000, "kMaxSegmentSize too big");
-	uint16_t transferring = (uint16_t)std::min(buffer.size(), kMaxSegmentSize);
-	AppendSendSegment(0, buffer.data(), transferring,
-		[this, transferring, callback](error_code err)
-	{
-		if (err)
-		{
-			(*callback)(err, 0);
-			return;
-		}
-		(*callback)(0, transferring);
-	});
-}
-
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, const char *payload, uint16_t payloadSize, SegmentCallback &&completeHandler)
-{
-	thread_local std::vector<char> segmentData;
-	//Construct segment (except seq, ack and wnd)
-	segmentData.resize(kHeaderSize + payloadSize);
-	char *data = segmentData.data();
-	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
-	memcpy(data, &virtualConnectionIdLE, 4);
-	uint16_t flagsLE = boost::endian::native_to_little(flags);
-	memcpy(data + 12, &flagsLE, 2);
-	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
-	memcpy(data + 16, &payloadSizeLE, 2);
-	memcpy(data + kHeaderSize, payload, payloadSize);
-	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
-}
-
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, const_buffer_sequence &&payload, SegmentCallback &&completeHandler)
-{
-	thread_local std::vector<char> segmentData;
-	//Construct segment (except seq, ack and wnd)
-	static_assert(kMaxSegmentSize < 0x10000, "kMaxSegmentSize too big");
-	uint16_t payloadSize = (uint16_t)std::min(payload.size_total(), kMaxSegmentSize);
-	segmentData.resize(kHeaderSize + payloadSize);
-	char *data = segmentData.data();
-	uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
-	memcpy(data, &virtualConnectionIdLE, 4);
-	uint16_t flagsLE = boost::endian::native_to_little(flags);
-	memcpy(data + 12, &flagsLE, 2);
-	uint16_t payloadSizeLE = boost::endian::native_to_little(payloadSize);
-	memcpy(data + 16, &payloadSizeLE, 2);
-	payload.gather(data + 16, payloadSize);
-	return AppendSendSegment(flags, std::move(segmentData), std::move(completeHandler));
-}
-
-void LoadBalancingManager::VirtualConnection::AppendSendSegment(uint16_t flags, std::vector<char> &&segmentWithPartOfHeader, SegmentCallback &&completeHandler)
-{
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed_)
+	if (closed_ || shutdownFlags_ & SHUTDOWN_SEND)
 	{
-		completeHandler(ERR_OPERATION_FAILURE);
-		return;
-	}
-	if ((shutdownFlags_ & SHUTDOWN_SEND) && !(flags & RST))
-	{
-		completeHandler(ERR_OPERATION_FAILURE);
+		completeHandler(ERR_OPERATION_FAILURE, 0);
 		return;
 	}
 
-	bool isAck = (flags & ACK) || (flags & RST);
-	uint32_t sendSegmentId = sendSegmentIdNext_;
-	if (!isAck)
-		++sendSegmentIdNext_; //ACKs don't take new segid
-
-	std::shared_ptr<SendSegment> sendingSegment = std::make_shared<SendSegment>(ioContext_, sendSegmentId, isAck);
-	sendingSegment->data = std::move(segmentWithPartOfHeader);
-	uint32_t sendSegmentIdLE = boost::endian::native_to_little(sendSegmentId);
-	memcpy(sendingSegment->data.data() + 4, &sendSegmentIdLE, 4); //Set seq
-
-	if (flags & FIN)
-		shutdownFlags_ |= SHUTDOWN_SEND;
-	if (flags & RST)
-		shutdownFlags_ |= SHUTDOWN_RESET;
-	if (sendSegmentId - sendLaskAck_ > sendWindow_)
+	if (sendBuffer_.Full() || sendBuffer_.DataSize() >= SendWindowSize())
 	{
-		assert(!sendCallback_);
-		std::shared_ptr<SegmentCallback> callback = std::make_shared<SegmentCallback>(completeHandler);
-		sendSegmentIdPending_ = sendSegmentId;
-		sendCallback_ = [this, sendingSegment, callback](error_code err)
+		std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
+		sendCallback_ = [this, buffer, callback](error_code err)
 		{
 			if (err)
 			{
-				{
-					std::lock_guard<std::mutex> logLock(logMutex);
-					std::cout << "VConn " << virtualConnectionId_ << " Segment " << sendingSegment->segmentId << " Pending Failed" << std::endl;
-				}
-				(*callback)(err);
+				(*callback)(err, 0);
 				return;
 			}
-			ioContext_.post([this, self = shared_from_this(), sendingSegment, callback]()
+			ioContext_.post([this, self = shared_from_this(), buffer, callback]()
 			{
-				std::unique_lock<std::recursive_mutex> lock(mutex_);
-				if (closed_)
-				{
-					{
-						std::lock_guard<std::mutex> logLock(logMutex);
-						std::cout << "VConn " << virtualConnectionId_ << " Segment " << sendingSegment->segmentId << " Pending Failed" << std::endl;
-					}
-					(*callback)(ERR_OPERATION_FAILURE);
-					return;
-				}
-				sendSegments_.push_back(std::move(sendingSegment));
-				lock.unlock();
-				BeginSendSegment();
-				(*callback)(0);
+				AsyncSendData(buffer, std::move(*callback));
 			});
 		};
 	}
 	else
 	{
-		sendSegments_.push_back(std::move(sendingSegment));
+		size_t transferred = sendBuffer_.Append(buffer.data(), buffer.size());
 		lock.unlock();
 		BeginSendSegment();
-		completeHandler(0);
+		completeHandler(0, transferred);
 	}
 }
 
@@ -156,28 +420,26 @@ void LoadBalancingManager::VirtualConnection::BeginSendSegment()
 	if (!inQueue_)
 	{
 		bool dataReady = false;
-		auto itr = sendSegments_.begin(), itrEnd = sendSegments_.end();
-		while (!dataReady && itr != itrEnd)
+		LoopInteger sendSegmentBegin = sendBuffer_.WindowBegin(), sendSegmentEnd;
+		LoopInteger maxSendSegmentEnd = sendBuffer_.MaxReadSegmentEnd(sendSegmentBegin, SendWindowSize());
+		for (const auto &p : sendSegmentsInFlight_)
 		{
-			const auto &segment = *itr;
-			if (segment->segmentId - sendLaskAck_ > sendWindow_)
+			sendSegmentEnd = p->segmentBegin;
+			assert(sendSegmentEnd >= sendSegmentBegin);
+			if (sendSegmentEnd >= maxSendSegmentEnd)
 				break;
-			switch (segment->state)
+			if (sendSegmentEnd != sendSegmentBegin)
 			{
-			case SendSegment::READY:
-				//Found, breaking
 				dataReady = true;
 				break;
-			case SendSegment::SENT:
-				++itr;
-				break;
-			case SendSegment::ACKNOWLEDGED: //Shoudn't happen
-				assert(false);
 			}
+			sendSegmentBegin = p->segmentEnd;
 		}
 		if (!dataReady)
 		{
-			return;
+			sendSegmentEnd = maxSendSegmentEnd;
+			if (sendSegmentEnd <= sendSegmentBegin)
+				return;
 		}
 		inQueue_ = true;
 		lock.unlock();
@@ -185,7 +447,7 @@ void LoadBalancingManager::VirtualConnection::BeginSendSegment()
 	}
 }
 
-void LoadBalancingManager::VirtualConnection::BeginSendSegmentAck()
+void LoadBalancingManager::VirtualConnection::BeginSendSegmentForce()
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed_)
@@ -206,86 +468,133 @@ void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_pt
 
 	inQueue_ = false;
 
-	std::shared_ptr<SendSegment> sendingSegment;
-	auto itr = sendSegments_.begin(), itrEnd = sendSegments_.end();
-	while (!sendingSegment && itr != itrEnd)
+	bool dataReady = false;
+	LoopInteger sendSegmentBegin = sendBuffer_.WindowBegin(), sendSegmentEnd;
+	LoopInteger maxSendSegmentEnd = sendBuffer_.MaxReadSegmentEnd(sendSegmentBegin, SendWindowSize());
+	for (const auto &p : sendSegmentsInFlight_)
 	{
-		const auto &segment = *itr;
-		if (segment->segmentId - sendLaskAck_ > sendWindow_)
+		sendSegmentEnd = p->segmentBegin;
+		assert(sendSegmentEnd >= sendSegmentBegin);
+		if (sendSegmentEnd >= maxSendSegmentEnd)
 			break;
-		switch (segment->state)
+		if (sendSegmentEnd != sendSegmentBegin)
 		{
-		case SendSegment::READY:
-			sendingSegment = segment;
-			//Erase if it's ACK since it doesn't need to be ACKed
-			if (sendingSegment->isAcknowledgement)
-				sendSegments_.erase(itr);
+			dataReady = true;
 			break;
-		case SendSegment::SENT:
-			++itr;
-			break;
-		case SendSegment::ACKNOWLEDGED: //Shoudn't happen
-			assert(false);
 		}
+		sendSegmentBegin = p->segmentEnd;
 	}
-	bool sendingPureAck = false;
-	if (!sendingSegment)
+	if (!dataReady)
 	{
-		sendingPureAck = true;
-
-		//Make a ACK segment
-
-		uint32_t sendSegmentId = sendSegmentIdNext_;
-		sendingSegment = std::make_shared<SendSegment>(ioContext_, sendSegmentId, true);
-		sendingSegment->data.resize(kHeaderSize);
-		char *data = sendingSegment->data.data();
-		uint32_t virtualConnectionIdLE = boost::endian::native_to_little(virtualConnectionId_);
-		memcpy(data, &virtualConnectionIdLE, 4);
-		uint32_t sendSegmentIdNextLE = boost::endian::native_to_little(sendSegmentId);
-		memcpy(data + 4, &sendSegmentIdNextLE, 4);
-		data[12] = ACK;
-		data[13] = data[14] = data[15] = 0;
+		sendSegmentEnd = maxSendSegmentEnd;
+		if (sendSegmentEnd > sendSegmentBegin)
+			dataReady = true;
+	}
+	if (!dataReady)
+	{
+		sendSegmentBegin = maxSendSegmentEnd;
 	}
 
-	uint32_t ackLE = boost::endian::native_to_little(receiveSegmentIdOffset_ + receiveSegmentComplete_);
-	assert(sendingSegment->data.size() >= kHeaderSize);
-	memcpy(sendingSegment->data.data() + 8, &ackLE, 4);
-	uint16_t wndLE = boost::endian::native_to_little((uint16_t)(kMaxWindowSize - receiveSegmentComplete_ - 1));
-	memcpy(sendingSegment->data.data() + 14, &wndLE, 2);
+	//Make send segment
 
-	sendingSegment->state = SendSegment::SENT;
-	++sendingSegment->tryCount;
-	if (!sendingSegment->isAcknowledgement) //ACK doesn't need retransmission
+	size_t dataSizeReserved = 0;
+	if (dataReady)
 	{
-		sendingSegment->retryTimer.expires_after(std::chrono::milliseconds(timeOut(connection->RTT(), sendingSegment->tryCount)));
-		sendingSegment->timeTry = std::chrono::steady_clock::now();
-		if (sendingSegment->tryCount == 1)
-			sendingSegment->timeStart = sendingSegment->timeTry;
-		sendingSegment->retryTimer.async_wait([this, self = shared_from_this(), sendingSegment, tryCount = sendingSegment->tryCount](const boost::system::error_code &ec)
+		if (sendSegmentEnd - sendSegmentBegin > kMaxSegmentSize)
+			dataSizeReserved = kMaxSegmentSize;
+		else
+			dataSizeReserved = sendSegmentEnd - sendSegmentBegin;
+	}
+	std::vector<char> segmentData;
+	segmentData.resize(kHeaderSize + dataSizeReserved);
+	memcpy(segmentData.data(), &virtualConnectionId_, 4);
+	uint32_t segLE = boost::endian::native_to_little(sendSegmentBegin.value());
+	memcpy(segmentData.data() + 4, &segLE, 4);
+	uint32_t ackLE = boost::endian::native_to_little(SendAckValue());
+	memcpy(segmentData.data() + 8, &ackLE, 4);
+	uint16_t wndLE = boost::endian::native_to_little((uint16_t)(receiveBuffer_.DataSize() >= 0x10000 ? 0 : 0x10000 - receiveBuffer_.DataSize()));
+	memcpy(segmentData.data() + 14, &wndLE, 2);
+
+	uint16_t flags = 0;
+	if (dataReady)
+	{
+		uint8_t specialBits, specialBitCounter = 0;
+		size_t dataSizeCopied = sendBuffer_.CopyTo(sendSegmentBegin, segmentData.data() + kHeaderSize, dataSizeReserved, specialBits);
+		assert(dataSizeCopied <= dataSizeReserved);
+		assert(!(specialBits & StreamWindowBuffer::EOS_BIT));
+		if (specialBits & StreamWindowBuffer::START_BIT)
+			flags |= SYN, ++specialBitCounter;
+		if (specialBits & StreamWindowBuffer::STOP_BIT)
+			flags |= FIN, ++specialBitCounter;
+		if (dataSizeCopied + specialBitCounter > sendSegmentEnd - sendSegmentBegin)
+		{
+			size_t erasing = std::min(dataSizeCopied, (dataSizeCopied + specialBitCounter) - (sendSegmentEnd - sendSegmentBegin));
+			dataSizeCopied -= erasing;
+		}
+		assert(dataSizeCopied > 0 || flags != 0);
+		segmentData.resize(kHeaderSize + dataSizeCopied);
+		uint16_t flagsLE = boost::endian::native_to_little(flags);
+		memcpy(segmentData.data() + 12, &flagsLE, 2);
+		uint16_t lenLE = boost::endian::native_to_little((uint16_t)dataSizeCopied);
+		memcpy(segmentData.data() + 16, &lenLE, 2);
+		sendSegmentEnd = sendSegmentBegin + dataSizeCopied + specialBitCounter;
+	}
+	else
+	{
+		//ACK or RST
+		if (sendBuffer_.EndOfStream())
+			flags |= RST;
+		else
+			flags |= ACK;
+		uint16_t flagsLE = boost::endian::native_to_little(flags);
+		memcpy(segmentData.data() + 12, &flagsLE, 2);
+		uint16_t lenLE = 0;
+		memcpy(segmentData.data() + 16, &lenLE, 2);
+		sendSegmentEnd = sendSegmentBegin;
+	}
+
+	std::shared_ptr<SendSegment> sendingSegment = std::make_shared<SendSegment>(ioContext_, sendSegmentBegin, sendSegmentEnd, std::move(segmentData), !dataReady);
+
+	sendingSegment->state = SendSegment::INFLIGHT;
+	if (!sendingSegment->isAcknowledgement) //ACKs don't need acknowledgement and retransmission
+	{
+		sendingSegment->retryTimer.expires_after(std::chrono::milliseconds(connection->RTT()));
+		sendingSegment->retryTimer.async_wait([this, self = shared_from_this(), sendingSegment](const boost::system::error_code &ec)
 		{
 			if (!ec)
 			{
-				RetrySendSegment(sendingSegment, tryCount);
+				RetrySendSegment(sendingSegment);
 			}
 		});
+		auto itr = sendSegmentsInFlight_.begin();
+		for (auto itrEnd = sendSegmentsInFlight_.end(); itr != itrEnd; ++itr)
+		{
+			if (sendingSegment->segmentBegin - (*itr)->segmentEnd < 0x80000000) // sendingSegment->segmentBegin >= (*itr)->segmentEnd
+			{
+				++itr;
+				assert((*itr)->segmentBegin - sendingSegment->segmentEnd < 0x80000000);
+				break;
+			}
+		}
+		sendSegmentsInFlight_.insert(itr, sendingSegment);
 	}
 
 	lock.unlock();
 	connection->Socket()->async_write(const_buffer(sendingSegment->data),
-		[this, self = shared_from_this(), connection, sendingSegment, tryCount = sendingSegment->tryCount](error_code err)
+		[this, self = shared_from_this(), connection, sendingSegment](error_code err)
 	{
 		if (err)
 		{
 			connection->SetConnectionFailed();
 			connection->ReleaseConnection();
-			RetrySendSegment(sendingSegment, tryCount);
+			RetrySendSegment(sendingSegment);
 		}
 		else
 		{
 			connection->ReleaseConnection();
 		}
 	});
-	if (sendingSegment->data[12] & RST) //RST sent
+	if (flags & RST) // RST is sent
 	{
 		lock.lock();
 		if (closed_)
@@ -293,29 +602,19 @@ void LoadBalancingManager::VirtualConnection::OnSendSegment(const std::shared_pt
 		ShutdownCheck();
 		return;
 	}
-	if (!sendingPureAck) //Pure ACK only appears when nothing is ready
+	if (dataReady) // Not empty, more data may present
 		BeginSendSegment();
 }
 
-void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared_ptr<SendSegment> &sendingSegment, size_t tryCount)
+void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared_ptr<SendSegment> &sendingSegment)
 {
-	if (sendingSegment->isAcknowledgement) //ACK doesn't need retransmission
+	if (sendingSegment->isAcknowledgement) //ACKs don't need retransmission
 		return;
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
 	if (closed_)
 		return;
-	if (sendingSegment->state != SendSegment::SENT || sendingSegment->tryCount != tryCount) //Prevents re-retransmission
+	if (sendingSegment->state != SendSegment::INFLIGHT) //Prevents re-retransmission
 		return;
-	if (tryCount >= 4)
-	{
-		auto timeEnd = std::chrono::steady_clock::now();
-		std::lock_guard<std::mutex> logLock(logMutex);
-		std::cout
-			<< "VConn " << virtualConnectionId_
-			<< " Segment " << sendingSegment->segmentId
-			<< " Sending Failed with timed-out after " << std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - sendingSegment->timeTry).count() << "ms"
-			<< std::endl;
-	}
 	sendingSegment->state = SendSegment::READY;
 	sendingSegment->retryTimer.cancel();
 	lock.unlock();
@@ -325,13 +624,13 @@ void LoadBalancingManager::VirtualConnection::RetrySendSegment(const std::shared
 void LoadBalancingManager::VirtualConnection::AsyncReceiveData(const mutable_buffer &buffer, prx_tcp_socket::transfer_callback &&completeHandler)
 {
 	std::unique_lock<std::recursive_mutex> lock(mutex_);
-	if (closed_)
+	if (closed_ || (shutdownFlags_ & SHUTDOWN_RECEIVE))
 	{
 		lock.unlock();
 		completeHandler(ERR_OPERATION_FAILURE, 0);
 		return;
 	}
-	if (receiveSegmentComplete_ >= 0x80000000)
+	if (receiveBuffer_.Empty())
 	{
 		std::shared_ptr<prx_tcp_socket::transfer_callback> callback = std::make_shared<prx_tcp_socket::transfer_callback>(completeHandler);
 		assert(!receiveCallback_);
@@ -354,7 +653,7 @@ void LoadBalancingManager::VirtualConnection::AsyncReceiveData(const mutable_buf
 	lock.unlock();
 	completeHandler(0, transferred);
 	if (windowChanged)
-		BeginSendSegmentAck();
+		BeginSendSegmentForce();
 }
 
 void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data, size_t size)
@@ -374,38 +673,27 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	if (closed_)
 		return;
 
-	//Process Ack even if SHUTDOWN_RECEIVE
-	bool ackIsValid = sendSegments_.empty() ? (ack == sendLaskAck_) : (ack - sendLaskAck_ < 0x80000000 && sendSegments_.back()->segmentId - ack < 0x80000000);
-	if (ackIsValid)
+	bool ackIsValid = (LoopInteger(ack) >= sendBuffer_.WindowBegin() && sendBuffer_.WindowEnd() >= LoopInteger(ack));
+	if (ackIsValid) //Process valid ACKs even if SHUTDOWN_RECEIVE
 	{
-		auto itr = sendSegments_.begin(), itrEnd = sendSegments_.end();
+		auto itr = sendSegmentsInFlight_.begin(), itrEnd = sendSegmentsInFlight_.end();
 		for (; itr != itrEnd; ++itr)
 		{
 			const auto &segment = *itr;
-			if (ack - segment->segmentId >= 0x80000000)
+			if (segment->segmentBegin - ack < 0x80000000) // ack <= segment->segmentBegin
 				break;
 			segment->state = SendSegment::ACKNOWLEDGED;
 			segment->retryTimer.cancel();
-			if (segment->tryCount >= 4)
-			{
-				auto timeEnd = std::chrono::steady_clock::now();
-				std::lock_guard<std::mutex> logLock(logMutex);
-				std::cout
-					<< "VConn " << virtualConnectionId_
-					<< " Segment " << segment->segmentId
-					<< " Sending Acked after " << std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - segment->timeStart).count() << "ms"
-					<< std::endl;
-			}
-			if (segment->data[12] & FIN)
-			{
-				assert(itr == --sendSegments_.end());
-				shutdownFlags_ |= SHUTDOWN_SENT;
-				ShutdownCheck();
-			}
 		}
-		sendSegments_.erase(sendSegments_.begin(), itr);
-		sendLaskAck_ = ack;
-		sendWindow_ = wnd;
+		sendSegmentsInFlight_.erase(sendSegmentsInFlight_.begin(), itr);
+		sendBuffer_.Progress(ack);
+		if (sendBuffer_.EndOfStream())
+		{
+			shutdownFlags_ |= SHUTDOWN_SENT;
+			ShutdownCheck();
+		}
+		sendSlidingWindow_ = wnd;
+		sendLastAckReceivedTime_ = std::chrono::steady_clock::now();
 	}
 
 	if (shutdownFlags_ & SHUTDOWN_RECEIVE)
@@ -419,14 +707,14 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 		if (!(flags & ACK)) //Other things are discarded, just send an ACK if needed
 		{
 			lock.unlock();
-			BeginSendSegmentAck();
+			BeginSendSegmentForce();
 		}
 		return;
 	}
 
-	if (!ackIsValid)
+	if (!ackIsValid) //Check if ack is seriously out of range
 	{
-		if (ack - sendLaskAck_ >= 0x40000000 && ack - sendLaskAck_ < 0xC0000000)
+		if (ack - sendBuffer_.WindowBegin().value() >= 0x20000000 && ack - sendBuffer_.WindowBegin().value() < 0xE0000000)
 		{
 			lock.unlock();
 			Reset();
@@ -449,51 +737,69 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	else
 	{
 		//Try reassemble
-		uint32_t segmentIndex = seq - receiveSegmentIdOffset_;
-		if (segmentIndex < kMaxWindowSize)
+		LoopInteger receiveSegmentBegin = seq;
+		LoopInteger receiveDataBegin = receiveSegmentBegin + (flags & SYN ? 1 : 0);
+		receiveBuffer_.Reserve(receiveDataBegin + size - kHeaderSize);
+		bool copyOk = false;
+		size_t copied = 0;
+		try
 		{
-			auto &receiveSegment = receiveSegments_[segmentIndex];
-			if (receiveSegment.ok)
+			copied = receiveBuffer_.CopyFrom(receiveDataBegin, data + kHeaderSize, size - kHeaderSize);
+			copyOk = true;
+		}
+		catch (...) {}
+		if (copyOk)
+		{
+			LoopInteger receiveDataEnd = receiveDataBegin + copied;
+			LoopInteger receiveSegmentEnd = receiveDataEnd;
+			if ((flags & FIN) && copied == size - kHeaderSize)
 			{
-				if (receiveSegment.flags != flags || receiveSegment.data.size() != size - kHeaderSize)
-				{
-					lock.unlock();
-					Reset();
-					return;
-				}
+				receiveBuffer_.Stop();
+				receiveSegmentEnd += 1;
 			}
-			else
-			{
-				//Received new segment
-				receiveSegment.ok = true;
-				receiveSegment.flags = flags;
-				receiveSegment.data.assign(data + kHeaderSize, data + size);
-				if (segmentIndex + 1 > receiveSegmentCount_)
-					receiveSegmentCount_ = segmentIndex + 1;
 
-				//Reassemble
-				uint32_t i = 0;
-				for (; i < receiveSegmentCount_; ++i)
+			if (receiveSegmentBegin < receiveBuffer_.WindowBegin())
+				receiveSegmentBegin = receiveBuffer_.WindowBegin();
+			if (receiveSegmentEnd > receiveBuffer_.WindowEnd())
+				receiveSegmentEnd = receiveBuffer_.WindowEnd();
+			if (receiveSegmentBegin < receiveSegmentEnd) //Valid segment?
+			{
+				auto itr = receiveSegmentsOk_.begin(), itrEnd = receiveSegmentsOk_.end();
+				for (; itr != itrEnd; ++itr)
+					if (receiveSegmentEnd <= itr->segmentEnd)
+						break;
+				if (itr != itrEnd && receiveSegmentEnd >= itr->segmentBegin) //Overlap?
+					itr->segmentBegin = std::min(itr->segmentBegin, receiveSegmentBegin);
+				else
+					itr = receiveSegmentsOk_.insert(itr, ReceiveSegment(receiveSegmentBegin.value(), receiveSegmentEnd.value()));
+				if (itr != receiveSegmentsOk_.begin())
 				{
-					if (!receiveSegments_[i].ok)
-						break;
-					if (receiveSegments_[i].flags & FIN)
+					auto itrPrev = itr;
+					--itrPrev;
+					if (itr->segmentBegin >= itrPrev->segmentEnd) //Overlap?
 					{
-						//FIN appeared, discard all segments after that, set SHUTDOWN_RECEIVE
-						for (uint32_t j = ++i; j < receiveSegmentCount_; ++j)
-							receiveSegments_[j].ok = false;
-						shutdownFlags_ |= SHUTDOWN_RECEIVE;
-						ShutdownCheck();
-						if (!(shutdownFlags_ & SHUTDOWN_SEND))
-							ioContext_.post([this, self = shared_from_this()]() { ShutdownSend(); });
-						break;
+						itrPrev->segmentEnd = std::max(itrPrev->segmentEnd, itr->segmentEnd);
+						//TODO: Try avoid unnecessary insert
+						receiveSegmentsOk_.erase(itr);
 					}
 				}
-				receiveSegmentComplete_ = i - 1;
-				ConsumeReceiveSegmentEmpty(); //Clear empty buffers
-				if (receiveCallback_ && receiveSegmentComplete_ < 0x80000000)
+
+				//Check if reassembled data at head
+				if (receiveSegmentsOk_.front().segmentBegin <= receiveBuffer_.WindowBegin())
 				{
-					SafeCallback(receiveCallback_, 0);
+					//Check FIN
+					if (receiveBuffer_.Stopped() && receiveSegmentsOk_.front().segmentEnd >= receiveBuffer_.WindowEnd())
+					{
+						//FIN appeared, set SHUTDOWN_RECEIVE
+						shutdownFlags_ |= SHUTDOWN_RECEIVE;
+						ShutdownCheck();
+						//if (!(shutdownFlags_ & SHUTDOWN_SEND)) //Auto stop send
+						//	ioContext_.post([this, self = shared_from_this()]() { ShutdownSend(); });
+					}
+					if (receiveCallback_)
+					{
+						SafeCallback(receiveCallback_, 0);
+					}
 				}
 			}
 		}
@@ -501,7 +807,7 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 
 	if (ackIsValid) //Valid ACK received, send queue and send window updated, check send callback and send queue
 	{
-		if (sendCallback_ && sendSegmentIdPending_ - sendLaskAck_ <= sendWindow_)
+		if (sendCallback_ && !(sendBuffer_.Full() || sendBuffer_.DataSize() >= SendWindowSize()))
 		{
 			SafeCallback(sendCallback_, 0);
 		}
@@ -512,68 +818,21 @@ void LoadBalancingManager::VirtualConnection::OnReceiveSegment(const char *data,
 	{
 		if (lock.owns_lock())
 			lock.unlock();
-		BeginSendSegmentAck();
+		BeginSendSegmentForce();
 	}
 }
 
 bool LoadBalancingManager::VirtualConnection::ConsumeReceiveSegment(char *dst, size_t dstSize, size_t &transferred)
 {
-	uint32_t srcIndex = 0;
 	transferred = 0;
-	while (receiveSegmentComplete_ - srcIndex < 0x80000000 && dstSize > 0)
+	if (receiveSegmentsOk_.front().segmentBegin <= receiveBuffer_.WindowBegin())
 	{
-		assert(receiveSegments_[srcIndex].ok);
-		size_t copying = std::min(dstSize, receiveSegments_[srcIndex].data.size() - receiveSegmentDataOffset_);
-		memcpy(dst + transferred, receiveSegments_[srcIndex].data.data() + receiveSegmentDataOffset_, copying);
-		transferred += copying;
-		receiveSegmentDataOffset_ += copying;
-		dstSize -= copying;
-		if (receiveSegmentDataOffset_ >= receiveSegments_[srcIndex].data.size())
-		{
-			receiveSegments_[srcIndex].ok = false;
-			++srcIndex;
-			receiveSegmentDataOffset_ = 0;
-		}
-	}
-	//Clean empty buffers if exist
-	while (receiveSegmentComplete_ - srcIndex < 0x80000000 && receiveSegmentDataOffset_ >= receiveSegments_[srcIndex].data.size())
-	{
-		assert(receiveSegments_[srcIndex].ok);
-		receiveSegments_[srcIndex].ok = false;
-		++srcIndex;
-		receiveSegmentDataOffset_ = 0;
-	}
-
-	if (srcIndex > 0)
-	{
-		for (uint32_t i = 0; srcIndex + i < kMaxWindowSize; ++i)
-			std::swap(receiveSegments_[i], receiveSegments_[srcIndex + i]);
-		receiveSegmentIdOffset_ += srcIndex;
-		receiveSegmentComplete_ -= srcIndex;
-		receiveSegmentCount_ -= srcIndex;
-		return true;
-	}
-	return false;
-}
-
-bool LoadBalancingManager::VirtualConnection::ConsumeReceiveSegmentEmpty()
-{
-	uint32_t srcIndex = 0;
-	while (receiveSegmentComplete_ - srcIndex < 0x80000000 && receiveSegmentDataOffset_ >= receiveSegments_[srcIndex].data.size())
-	{
-		assert(receiveSegments_[srcIndex].ok);
-		receiveSegments_[srcIndex].ok = false;
-		++srcIndex;
-		receiveSegmentDataOffset_ = 0;
-	}
-	if (srcIndex > 0)
-	{
-		for (uint32_t i = 0; srcIndex + i < kMaxWindowSize; ++i)
-			std::swap(receiveSegments_[i], receiveSegments_[srcIndex + i]);
-		receiveSegmentIdOffset_ += srcIndex;
-		receiveSegmentComplete_ -= srcIndex;
-		receiveSegmentCount_ -= srcIndex;
-		return true;
+		uint8_t specialBits;
+		transferred = receiveBuffer_.Consume(dst, dstSize, specialBits, receiveSegmentsOk_.front().segmentEnd);
+		receiveSegmentsOk_.front().segmentBegin = receiveBuffer_.WindowBegin();
+		if (receiveSegmentsOk_.front().segmentBegin >= receiveSegmentsOk_.front().segmentEnd)
+			receiveSegmentsOk_.pop_front();
+		return transferred != 0 || specialBits != 0;
 	}
 	return false;
 }
@@ -585,8 +844,10 @@ void LoadBalancingManager::VirtualConnection::ShutdownSend()
 	{
 		SafeCallback(sendCallback_, ERR_OPERATION_FAILURE);
 	}
+	sendBuffer_.Stop();
+	shutdownFlags_ |= SHUTDOWN_SEND;
 	lock.unlock();
-	AppendSendSegment(FIN, nullptr, 0, [](error_code) {});
+	BeginSendSegmentForce();
 }
 
 void LoadBalancingManager::VirtualConnection::ShutdownReceive()
@@ -604,8 +865,9 @@ void LoadBalancingManager::VirtualConnection::Reset()
 	{
 		SafeCallback(sendCallback_, ERR_OPERATION_FAILURE);
 	}
+	sendBuffer_.StopForce();
 	lock.unlock();
-	AppendSendSegment(RST, nullptr, 0, [](error_code) {});
+	BeginSendSegmentForce();
 }
 
 void LoadBalancingManager::VirtualConnection::ShutdownCheck()
