@@ -4,6 +4,8 @@
 #include "Socks5Session.h"
 #include "AcceptorManager.h"
 
+std::recursive_mutex logMutex;
+
 ProxyServer::ProxyServer(asio::io_context &ioContext, const endpoint &acceptorLocalEp)
 	:ioContext_(ioContext), acceptorLocalEp_(acceptorLocalEp), acceptorRetryTimer_(ioContext)
 {
@@ -54,6 +56,7 @@ void ProxyServer::EndSession(ProxySession *sess)
 {
 	std::lock_guard<std::recursive_mutex> lock(sessionsMutex_);
 
+	std::lock_guard<std::recursive_mutex> lock2(logMutex);
 	std::cout << "End ";
 	PrintSession(*sess);
 	sessions_.erase(sess);
@@ -61,6 +64,7 @@ void ProxyServer::EndSession(ProxySession *sess)
 
 void ProxyServer::PrintSession(const ProxySession &sess)
 {
+	std::lock_guard<std::recursive_mutex> lock(logMutex);
 	std::cout << sess.SessionType() << '\t';
 	std::cout << sess.UpstreamEndpoint().addr().to_string() << ':' << sess.UpstreamEndpoint().port() << '\t';
 	std::cout << sess.DownstreamEndpoint().addr().to_string() << ':' << sess.DownstreamEndpoint().port() << '\t';

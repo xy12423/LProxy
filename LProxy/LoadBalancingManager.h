@@ -205,6 +205,8 @@ class LoadBalancingManager
 		void ShutdownReceive();
 		void Reset();
 	private:
+		void OnSegmentSuccess();
+		void OnSegmentFailure();
 		uint32_t SendWindowSize();
 		uint32_t SendAckValue();
 		void BeginSendSegment();
@@ -220,7 +222,7 @@ class LoadBalancingManager
 
 		StreamWindowBuffer sendBuffer_;
 		uint16_t sendSlidingWindow_ = 0;
-		uint32_t sendCongestionWindow_ = 0;
+		uint32_t sendCongestionWindow_ = 1;
 		std::chrono::steady_clock::time_point sendLastAckReceivedTime_ = std::chrono::steady_clock::now();
 		std::vector<std::shared_ptr<SendSegment>> sendSegmentsInFlight_;
 		SegmentCallback sendCallback_; //Set if sendBuffer_ is full before appended, Called after sendBuffer_ is not full
