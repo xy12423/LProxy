@@ -188,7 +188,7 @@ void Socks4Session::BeginConnect(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	downTcp_.reset(server_.NewDownstreamTcpSocket());
+	downTcp_ = server_.NewDownstreamTcpSocket();
 	downTcp_->async_open([this, self = std::move(self), ep](error_code err)
 	{
 		if (err)

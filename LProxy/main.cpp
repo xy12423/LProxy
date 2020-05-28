@@ -1,8 +1,7 @@
 ﻿#include "pch.h"
 #include "ProxyServer.h"
 #include "AcceptorManager.h"
-
-std::string key;
+#include "SocketFactory.h"
 
 void ltrim(std::string& str)
 {
@@ -27,130 +26,75 @@ void trim(std::string& str)
 	rtrim(str);
 }
 
-class EntranceServer : public ProxyServer
+class ConfigurableServer : public ProxyServer
 {
 public:
-	EntranceServer(asio::io_context &ioCtx, const endpoint &ep, const endpoint &exitEp) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx), exitServerEp(exitEp) {}
-
-	virtual prx_listener* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new socks5_tcp_socket(exitServerEp, std::make_unique<obfs_websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
-	virtual prx_listener* NewDownstreamAcceptor() { return new socks5_listener(exitServerEp, [this]() { return std::make_unique<obfs_websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key); }); }
-	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new socks5_udp_socket(exitServerEp, std::make_unique<obfs_websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), key)); }
-private:
-	asio::io_context &ioCtx_;
-	endpoint exitServerEp;
-};
-
-class ExitServer : public ProxyServer
-{
-public:
-	ExitServer(asio::io_context &ioCtx, const endpoint &ep) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx) {}
-
-	virtual prx_listener* NewUpstreamAcceptor() { return new obfs_websock_listener(std::make_unique<raw_listener>(ioCtx_), key); }
-	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-private:
-	asio::io_context &ioCtx_;
-};
-
-class ReverseExitServer : public ProxyServer
-{
-public:
-	ReverseExitServer(asio::io_context &ioCtx, const endpoint &ep, const endpoint &remoteEp, const std::string &remoteKey) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx), remoteEp_(remoteEp), remoteKey_(remoteKey) {}
-
-	virtual prx_listener* NewUpstreamAcceptor() {
-		return new obfs_websock_listener(
-			std::make_unique<socks5_listener>(
-				remoteEp_,
-				[this]() { return std::make_unique<obfs_websock_tcp_socket>(std::make_unique<raw_tcp_socket>(ioCtx_), remoteKey_); }
-				),
-			key
-		);
+	ConfigurableServer(
+		asio::io_context &ioCtx,
+		const endpoint &ep,
+		const ptree::ptree &upstreamAcceptorArgs,
+		const ptree::ptree &upstreamUdpSocketArgs,
+		const ptree::ptree &downstreamTcpSocketArgs,
+		const ptree::ptree &downstreamAcceptorArgs,
+		const ptree::ptree &downstreamUdpSocketArgs)
+		:ProxyServer(ioCtx, ep), ioCtx_(ioCtx),
+		upstreamAcceptorArgs_(upstreamAcceptorArgs),
+		upstreamUdpSocketArgs_(upstreamUdpSocketArgs),
+		downstreamTcpSocketArgs_(downstreamTcpSocketArgs),
+		downstreamAcceptorArgs_(downstreamAcceptorArgs),
+		downstreamUdpSocketArgs_(downstreamUdpSocketArgs)
+	{
 	}
-	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
+
+	virtual std::unique_ptr<prx_listener> NewUpstreamAcceptor() override { return SocketFactory::LoadListener(upstreamAcceptorArgs_, ioCtx_); }
+	virtual std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket() override { return SocketFactory::LoadUdpSocket(upstreamUdpSocketArgs_, ioCtx_); }
+	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() override { return SocketFactory::LoadTcpSocket(downstreamTcpSocketArgs_, ioCtx_); }
+	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() override { return SocketFactory::LoadListener(downstreamAcceptorArgs_, ioCtx_); }
+	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() override { return SocketFactory::LoadUdpSocket(downstreamUdpSocketArgs_, ioCtx_); }
 private:
 	asio::io_context &ioCtx_;
-	endpoint remoteEp_;
-	std::string remoteKey_;
+	ptree::ptree upstreamAcceptorArgs_, upstreamUdpSocketArgs_, downstreamTcpSocketArgs_, downstreamAcceptorArgs_, downstreamUdpSocketArgs_;
 };
 
-class RawServer : public ProxyServer
+void PrintPropertyTree(const ptree::ptree &node, int level = 0)
 {
-public:
-	RawServer(asio::io_context &ioCtx, const endpoint &ep) :ProxyServer(ioCtx, ep), ioCtx_(ioCtx) {}
-
-	virtual prx_listener* NewUpstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket* NewUpstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-	virtual prx_tcp_socket* NewDownstreamTcpSocket() { return new raw_tcp_socket(ioCtx_); }
-	virtual prx_listener* NewDownstreamAcceptor() { return new raw_listener(ioCtx_); }
-	virtual prx_udp_socket* NewDownstreamUdpSocket() { return new raw_udp_socket(ioCtx_); }
-private:
-	asio::io_context &ioCtx_;
-};
+	for (const auto &val : node)
+	{
+		for (int i = 0; i < level; ++i)
+			std::cout << ' ';
+		std::cout << val.first << ": " << val.second.get_value("") << std::endl;
+		if (!val.second.empty())
+			PrintPropertyTree(val.second, level + 1);
+	}
+}
 
 int main(int argc, char *argv[])
 {
-	std::unordered_map<std::string, std::string> config_items;
-
-	for (int i = 1; i < argc; i++)
-	{
-		std::string arg(argv[i]);
-		size_t pos = arg.find('=');
-		if (pos == std::string::npos)
-			config_items[std::move(arg)].clear();
-		else
-			config_items[arg.substr(0, pos)] = arg.substr(pos + 1);
-	}
-
-	CryptoPP::SHA256 hasher;
-	CryptoPP::byte key_real[CryptoPP::SHA256::DIGESTSIZE];
-	hasher.CalculateDigest(key_real, (CryptoPP::byte*)(config_items.at("key").data()), config_items.at("key").size());
-	key.assign((const char*)key_real, sizeof(key_real));
+	std::string configPath;
+	if (argc >= 2)
+		configPath = argv[1];
+	else
+		configPath = "config.json";
 
 	asio::io_context iosrv;
 	asio::executor_work_guard<asio::io_context::executor_type> iosrv_work = boost::asio::make_work_guard(iosrv);
 	std::thread th([&iosrv, &iosrv_work]() { while (iosrv_work.owns_work()) { try { iosrv.run(); } catch (std::exception &ex) { std::cerr << ex.what() << std::endl; } catch (...) {} }});
 	th.detach();
 
+	ptree::ptree root;
+	ptree::read_json(configPath.c_str(), root);
+	//PrintPropertyTree(root);
+
 	std::unique_ptr<ProxyServer> server;
-	if (config_items.count("client") > 0)
-	{
-		server = std::make_unique<EntranceServer>(
-			iosrv,
-			endpoint(0x7F000001, (port_type)std::stoi(config_items.at("client_port"))),
-			endpoint(config_items.at("server_addr"), (port_type)std::stoi(config_items.at("server_port")))
-			);
-		server->Start();
-	}
-	else if (config_items.count("server") > 0)
-	{
-		server = std::make_unique<ExitServer>(
-			iosrv,
-			endpoint(0ul, (port_type)std::stoi(config_items.at("server_port")))
+	server = std::make_unique<ConfigurableServer>(
+		iosrv,
+		SocketFactory::StringToEndpointWithResolve(root.get<std::string>("listen"), 1080, iosrv),
+		root.get_child("upstreamAcceptor"),
+		root.get_child("upstreamUdpSocket"),
+		root.get_child("downstreamTcpSocket"),
+		root.get_child("downstreamAcceptor"),
+		root.get_child("downstreamUdpSocket")
 		);
-	}
-	else if (config_items.count("test") > 0)
-	{
-		server = std::make_unique<RawServer>(
-			iosrv,
-			endpoint(0ul, (port_type)std::stoi(config_items.at("server_port")))
-		);
-	}
-	else if (config_items.count("reverse") > 0)
-	{
-		server = std::make_unique<ReverseExitServer>(
-			iosrv,
-			endpoint(endpoint(0ul, (port_type)std::stoi(config_items.at("client_port")))),
-			endpoint(config_items.at("server_addr"), (port_type)std::stoi(config_items.at("server_port"))),
-			key
-		);
-	}
 	server->Start();
 
 	std::string cmd, arg;

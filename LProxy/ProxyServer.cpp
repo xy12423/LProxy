@@ -136,7 +136,7 @@ void ProxyServer::InitAcceptor()
 	if (stopping_)
 		return;
 
-	acceptor_.reset(NewUpstreamAcceptor());
+	acceptor_ = NewUpstreamAcceptor();
 	acceptorRetrying_ = false;
 	acceptor_->async_open([this](error_code err)
 	{

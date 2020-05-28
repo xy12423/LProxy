@@ -35,6 +35,13 @@
 #include <utility>
 
 #include <boost/asio.hpp>
+#include <boost/property_tree/ptree.hpp>
+#include <boost/property_tree/json_parser.hpp>
+
+namespace asio = boost::asio;
+namespace ptree = boost::property_tree;
+
+#include <cryptopp/md5.h>
 
 #include <libprxsocket/socket_raw.h>
 #include <libprxsocket/socket_http.h>
@@ -45,6 +52,7 @@
 #include <libprxsocket/socket_ssr_auth.h>
 #include <libprxsocket/socket_ssr_obfs.h>
 #include <libprxsocket/crypto_cryptopp.h>
+
 using namespace prxsocket;
 using namespace prxsocket::socks5_helper;
 
@@ -52,7 +60,5 @@ using namespace prxsocket::socks5_helper;
 #pragma comment(lib, "cryptlib.lib")
 #pragma comment(lib, "libprxsocket.lib")
 #endif
-
-namespace asio = boost::asio;
 
 #endif //PCH_H

@@ -202,7 +202,7 @@ void Socks5Session::BeginConnect(const endpoint &ep)
 {
 	auto self = shared_from_this();
 
-	downTcp_.reset(server_.NewDownstreamTcpSocket());
+	downTcp_ = server_.NewDownstreamTcpSocket();
 	downTcp_->async_open([this, self = std::move(self), ep](error_code err)
 	{
 		if (err)
@@ -318,8 +318,8 @@ void Socks5Session::EndBind()
 
 void Socks5Session::BeginUdpAssociation(const endpoint &ep)
 {
-	upUdp_.reset(server_.NewUpstreamUdpSocket());
-	downUdp_.reset(server_.NewDownstreamUdpSocket());
+	upUdp_ = server_.NewUpstreamUdpSocket();
+	downUdp_ = server_.NewDownstreamUdpSocket();
 	if (IsAdvancedProtocol())
 		BeginUdpAssociationWithBind(ep);
 	else

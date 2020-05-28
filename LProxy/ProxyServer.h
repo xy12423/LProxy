@@ -18,11 +18,11 @@ public:
 	void PrintSession(const ProxySession &session);
 	void PrintSessions();
 
-	virtual prx_listener *NewUpstreamAcceptor() = 0;
-	virtual prx_udp_socket *NewUpstreamUdpSocket() = 0;
-	virtual prx_tcp_socket *NewDownstreamTcpSocket() = 0;
-	virtual prx_listener *NewDownstreamAcceptor() = 0;
-	virtual prx_udp_socket *NewDownstreamUdpSocket() = 0;
+	virtual std::unique_ptr<prx_listener> NewUpstreamAcceptor() = 0;
+	virtual std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket() = 0;
+	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() = 0;
+	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() = 0;
+	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() = 0;
 private:
 	void Accept();
 	void InitAcceptor();
