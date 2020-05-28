@@ -173,11 +173,22 @@ void Socks5Session::ReceiveRequest()
 			BeginBind(ep);
 			break;
 		case UDP_ASSOCIATE:
+			udpOverTcp_ = false;
 			AccessSessionType().append(" Udp Associate");
 			if (IsAdvancedProtocol())
 				AccessSessionType().append(" Advanced");
 			BeginUdpAssociation(ep);
 			break;
+		case UDP_ASSOCIATE_OVER_TCP:
+			if (IsAdvancedProtocol())
+			{
+				udpOverTcp_ = true;
+				AccessSessionType().append(" Udp Associate Over Tcp");
+				if (IsAdvancedProtocol())
+					AccessSessionType().append(" Advanced");
+				BeginUdpAssociation(ep);
+				break;
+			}
 		default:
 			Stop();
 			return;
@@ -425,10 +436,19 @@ void Socks5Session::EndUdpAssociation()
 					return;
 				}
 
-				udpOverTcpBuf_ = std::make_unique<char[]>(kBufSize);
-				RelayUpUdpOverTcp();
-				RelayUpUdp();
-				RelayDownUdp();
+				if (udpOverTcp_)
+				{
+					udpOverTcpBuf_ = std::make_unique<char[]>(kBufSize);
+					RelayUpUdpOverTcp();
+					RelayUpUdp();
+					RelayDownUdp();
+				}
+				else
+				{
+					ReadUpKeepalive();
+					RelayUpUdp();
+					RelayDownUdp();
+				}
 			});
 		});
 	}

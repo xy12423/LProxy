@@ -12,7 +12,8 @@ class Socks5Session : public ProxySession
 	{
 		CONNECT = 1,
 		BIND = 2,
-		UDP_ASSOCIATE = 3
+		UDP_ASSOCIATE = 3,
+		UDP_ASSOCIATE_OVER_TCP = 4,
 	};
 public:
 	Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket);
@@ -66,6 +67,7 @@ private:
 
 	std::unique_ptr<char[]> upBuf_, downBuf_, udpOverTcpBuf_;
 	char udpKeepAliveBuf_;
+	bool udpOverTcp_ = false;
 
 	std::atomic_bool replySent_{ false }, stopping_{ false };
 };
