@@ -187,11 +187,12 @@ void ProxyServer::InitAcceptor()
 
 void ProxyServer::InitAcceptorFailed()
 {
-	if (acceptorRetrying_.exchange(true))
-		return;
 	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
 	if (stopping_)
 		return;
+	if (acceptorRetrying_)
+		return;
+	acceptorRetrying_ = true;
 
 	acceptor_->async_close([this](error_code)
 	{
