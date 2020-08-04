@@ -39,7 +39,16 @@
     <ClInclude Include="LoadBalancingManager.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="SocketFactory.h">
+    <ClInclude Include="ServerConfiguration.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ServerConfigurationNode.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ServerConfigurationVisitor.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ServerConfigurationNodes.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
@@ -71,7 +80,13 @@
     <ClCompile Include="LoadBalancingManager.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="SocketFactory.cpp">
+    <ClCompile Include="ServerConfiguration.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ServerConfigurationVisitor.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ServerConfigurationNodes.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>
