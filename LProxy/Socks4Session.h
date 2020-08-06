@@ -24,7 +24,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 class Socks4Session : public ProxySession
 {
-	static constexpr size_t kBufSize = 0x10000;
+	static constexpr size_t kBufSize = 0x2000;
 
 	static constexpr uint8_t kSocksVersion = 4, kReplyVersion = 0;
 	static constexpr size_t kFixedHeaderSize = 8;
