@@ -28,7 +28,8 @@ private:
 public:
 	ServerConfiguration(asio::io_context &io_context, const ptree::ptree &arg_root);
 
-	endpoint UpstreamLocalEndpoint();
+	int Workers() const;
+	endpoint UpstreamLocalEndpoint() const;
 	std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket();
 	std::unique_ptr<prx_listener> NewUpstreamListener();
 	std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket();

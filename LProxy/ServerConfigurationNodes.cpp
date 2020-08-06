@@ -318,6 +318,7 @@ std::unique_ptr<prx_listener> ObfsWebsockListenerNode::NewListener()
 }
 
 RootNode::RootNode(
+	int thread_count,
 	const endpoint &upstream_local_endpoint,
 	ServerConfigurationNode *upstream_listener,
 	ServerConfigurationNode *upstream_udp_socket,
@@ -325,7 +326,8 @@ RootNode::RootNode(
 	ServerConfigurationNode *downstream_udp_socket,
 	ServerConfigurationNode *downstream_listener
 )
-	:upstream_local_endpoint_(upstream_local_endpoint),
+	:thread_count_(thread_count),
+	upstream_local_endpoint_(upstream_local_endpoint),
 	downstream_tcp_socket_(downstream_tcp_socket),
 	upstream_udp_socket_(upstream_udp_socket),
 	downstream_udp_socket_(downstream_udp_socket),
@@ -341,6 +343,8 @@ void RootNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 
 void RootNode::Validate() const
 {
+	if (thread_count_ < 1 || thread_count_ > 16)
+		throw std::invalid_argument("Invalid thread count");
 	if (dynamic_cast<TcpSocketNode *>(downstream_tcp_socket_) == nullptr)
 		throw std::invalid_argument("Invalid downstream tcp socket");
 	if (dynamic_cast<UdpSocketNode *>(upstream_udp_socket_) == nullptr)

@@ -87,7 +87,23 @@ int main(int argc, char *argv[])
 
 	asio::io_context iosrv;
 	asio::executor_work_guard<asio::io_context::executor_type> iosrv_work = boost::asio::make_work_guard(iosrv);
-	std::thread th([&iosrv, &iosrv_work]() { while (iosrv_work.owns_work()) { try { iosrv.run(); } catch (std::exception &ex) { std::cerr << ex.what() << std::endl; } catch (...) {} }});
+	auto worker_function = [&iosrv, &iosrv_work]()
+	{
+		while (iosrv_work.owns_work())
+		{
+			try
+			{
+				iosrv.run();
+			}
+			catch (std::exception &ex)
+			{
+				std::cerr << ex.what() << std::endl;
+			}
+			catch (...) {}
+		}
+	};
+	std::vector<std::thread> worker_threads;
+	worker_threads.emplace_back(worker_function); //First worker thread
 
 	ptree::ptree root;
 	ptree::read_json(configPath.c_str(), root);
@@ -103,9 +119,14 @@ int main(int argc, char *argv[])
 		std::cerr << e.what() << std::endl;
 		AcceptorManager::Stop();
 		iosrv_work.reset();
-		th.join();
+		for (auto itr = worker_threads.begin(), itr_end = worker_threads.end(); itr != itr_end; ++itr)
+			itr->join();
 		return 1;
 	}
+
+	while (worker_threads.size() < (size_t)conf->Workers())
+		worker_threads.emplace_back(worker_function); //Extra worker threads
+
 	std::unique_ptr<ProxyServer> server;
 	server = std::make_unique<ConfigurableServer>(iosrv, *conf);
 	server->Start();
@@ -137,7 +158,8 @@ int main(int argc, char *argv[])
 	server->Stop();
 	AcceptorManager::Stop();
 	iosrv_work.reset();
-	th.join();
+	for (auto itr = worker_threads.begin(), itr_end = worker_threads.end(); itr != itr_end; ++itr)
+		itr->join();
 
 	return 0;
 }

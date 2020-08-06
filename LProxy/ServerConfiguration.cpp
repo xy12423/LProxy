@@ -234,7 +234,12 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 	root_node_->AcceptVisitor(validating_visitor);
 }
 
-endpoint ServerConfiguration::UpstreamLocalEndpoint()
+int ServerConfiguration::Workers() const
+{
+	return static_cast<RootNode *>(root_node_)->ThreadCount();
+}
+
+endpoint ServerConfiguration::UpstreamLocalEndpoint() const
 {
 	return static_cast<RootNode *>(root_node_)->UpstreamLocalEndpoint();
 }
@@ -267,6 +272,7 @@ std::unique_ptr<prx_listener> ServerConfiguration::NewDownstreamListener()
 ServerConfigurationNode *ServerConfiguration::LoadRootNode(const ptree::ptree &args)
 {
 	std::unique_ptr<RootNode> node = std::make_unique<RootNode>(
+		args.get<int>("workers", 1),
 		StringToEndpointWithResolve(args.get<std::string>("listen"), 1080),
 		LoadListenerNode(args.get_child("upstreamAcceptor")),
 		LoadUdpSocketNode(args.get_child("upstreamUdpSocket")),
