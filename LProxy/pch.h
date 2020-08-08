@@ -60,6 +60,10 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 namespace asio = boost::asio;
 namespace ptree = boost::property_tree;
 
+#include <cryptopp/cryptlib.h>
+#include <cryptopp/aes.h>
+#include <cryptopp/gcm.h>
+#include <cryptopp/modes.h>
 #include <cryptopp/md5.h>
 
 #include <libprxsocket/socket_raw.h>
@@ -70,7 +74,7 @@ namespace ptree = boost::property_tree;
 #include <libprxsocket/socket_ss_crypto.h>
 #include <libprxsocket/socket_ssr_auth.h>
 #include <libprxsocket/socket_ssr_obfs.h>
-#include <libprxsocket/crypto_cryptopp.h>
+#include <libprxsocket/random_generator.h>
 
 using namespace prxsocket;
 using namespace prxsocket::socks5_helper;

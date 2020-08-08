@@ -584,13 +584,13 @@ void Socks5Session::ReceiveSocks5Body(const std::shared_ptr<socksreq_callback> &
 	switch (upBuf_[3])	//ATYP
 	{
 	case 1: //V4
-		bytesLast = address_v4::addr_size + 1;
+		bytesLast = address_v4::ADDR_SIZE + 1;
 		break;
 	case 3: //STR
 		bytesLast = upBuf_[4] + 2;
 		break;
 	case 4: //V6
-		bytesLast = address_v6::addr_size + 1;
+		bytesLast = address_v6::ADDR_SIZE + 1;
 		break;
 	default:
 		throw(socks5_error(ERR_UNSUPPORTED));

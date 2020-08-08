@@ -372,7 +372,7 @@ void Socks4Session::SendResponse(uint8_t err, const endpoint &ep, null_callback 
 		buf->push_back(ep.port() & 0xFF);
 		if (ep.addr().type() != address::V4)
 			throw(socks5_error(ERR_BAD_ARG_LOCAL));
-		buf->append(ep.addr().v4().data(), address_v4::addr_size);  //DSTADDR
+		buf->append(ep.addr().v4().data(), address_v4::ADDR_SIZE);  //DSTADDR
 
 		upTcp_->async_write(const_buffer(*buf),
 			[this, buf, callback](error_code err)
