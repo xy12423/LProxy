@@ -24,6 +24,34 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 namespace
 {
 
+	class encryptor_plain final : public prxsocket::encryptor
+	{
+	public:
+		virtual size_t key_size() const override { return 0; }
+		virtual size_t iv_size() const override { return 0; }
+		virtual const char *iv() const override { return nullptr; }
+		virtual void set_key(const char *key) override {}
+		virtual void set_key_iv(const char *key, const char *iv) override {}
+		virtual void encrypt(std::vector<char> &dst, const char *src, size_t src_size) override
+		{
+			dst.insert(dst.end(), src, src + src_size);
+		}
+	};
+
+	class decryptor_plain final : public prxsocket::decryptor
+	{
+	public:
+		virtual size_t key_size() const override { return 0; }
+		virtual size_t iv_size() const override { return 0; }
+		virtual const char *iv() const override { return nullptr; }
+		virtual void set_key(const char *key) override {}
+		virtual void set_key_iv(const char *key, const char *iv) override {}
+		virtual void decrypt(std::vector<char> &dst, const char *src, size_t src_size) override
+		{
+			dst.insert(dst.end(), src, src + src_size);
+		}
+	};
+
 	template <typename Crypto, size_t KEY_LENGTH, size_t IV_LENGTH>
 	class encryptor_cryptopp final : public prxsocket::encryptor
 	{
@@ -182,7 +210,7 @@ namespace
 	void StringToSSKey(char(&dst)[N], const char *src, size_t src_size)
 	{
 		static_assert(N > 0 && N % 16 == 0, "str_to_key doesn't support dst with any size");
-		CryptoPP::MD5 md5;
+		CryptoPP::Weak::MD5 md5;
 
 		size_t i = 0;
 		while (i < N)
@@ -242,13 +270,25 @@ namespace
 		};
 	}
 
+	template <typename BaseCrypto, size_t KeySize, size_t IvSize, size_t TagSize>
+	Cryptor CryptoPPAuthCryptoFactory()
+	{
+		return Cryptor{
+			std::make_unique<encryptor_cryptopp_auth<BaseCrypto, KeySize, IvSize, TagSize>>(),
+			std::make_unique<decryptor_cryptopp_auth<BaseCrypto, KeySize, IvSize, TagSize>>()
+		};
+	}
+
 	Cryptor CryptoFactory(const std::string &method)
 	{
 		static std::unordered_map<std::string, std::function<Cryptor()>> factories = {
+			{"none", []()->Cryptor { return Cryptor{ std::make_unique<encryptor_plain>(), std::make_unique<decryptor_plain>() }; }},
 			{"aes-128-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 128, 128>(); }},
 			{"aes-256-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 256, 128>(); }},
 			{"aes-128-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CFB_Mode<CryptoPP::AES>, 128, 128>(); }},
 			{"aes-256-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CFB_Mode<CryptoPP::AES>, 256, 128>(); }},
+			{"aes-128-gcm", []()->Cryptor { return CryptoPPAuthCryptoFactory<CryptoPP::GCM<CryptoPP::AES>, 128, 96, 128>(); }},
+			{"chacha20-poly1305", []()->Cryptor { return CryptoPPAuthCryptoFactory<CryptoPP::ChaCha20Poly1305, 256, 96, 128>(); }},
 		};
 		try
 		{
@@ -268,6 +308,54 @@ namespace
 		if (args.count(arg) == 0)
 			return args.emplace(arg, arg).first->second;
 		return args.at(arg);
+	}
+
+	uint8_t HexDigit(char ch)
+	{
+		switch (ch)
+		{
+		case '0':
+			return 0;
+		case '1':
+			return 1;
+		case '2':
+			return 2;
+		case '3':
+			return 3;
+		case '4':
+			return 4;
+		case '5':
+			return 5;
+		case '6':
+			return 6;
+		case '7':
+			return 7;
+		case '8':
+			return 8;
+		case '9':
+			return 9;
+		case 'A':
+		case 'a':
+			return 10;
+		case 'B':
+		case 'b':
+			return 11;
+		case 'C':
+		case 'c':
+			return 12;
+		case 'D':
+		case 'd':
+			return 13;
+		case 'E':
+		case 'e':
+			return 14;
+		case 'F':
+		case 'f':
+			return 15;
+		default:
+			assert(false);
+			return -1;
+		}
 	}
 
 }
@@ -375,6 +463,45 @@ void SSRHttpSimpleTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visit
 std::unique_ptr<prx_tcp_socket> SSRHttpSimpleTcpSocketNode::NewTcpSocket()
 {
 	return std::make_unique<ssr::ssr_http_simple_tcp_socket>(Base().NewTcpSocket(), param_);
+}
+
+VMessTcpSocketNode::VMessTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint, const std::string &uid, const std::string &security)
+	:LayeredNodeTemplate(base), server_endpoint_(server_endpoint), security_str_(security)
+{
+	size_t pos = 0;
+	for (int i = 0; i < 16; ++i)
+	{
+		while (pos < uid.size() && !isxdigit(uid[pos]))
+			++pos;
+		if (pos >= uid.size())
+			throw std::invalid_argument("Invalid uuid");
+		char h = uid[pos++];
+		while (pos < uid.size() && !isxdigit(uid[pos]))
+			++pos;
+		if (pos >= uid.size())
+			throw std::invalid_argument("Invalid uuid");
+		char l = uid[pos++];
+		uid_[i] = HexDigit(h) << 4 | HexDigit(l);
+	}
+	if (security == "aes-128-gcm")
+		security_ = v2ray::SEC_AES_128_GCM;
+	else if (security == "chacha20-poly1305")
+		security_ = v2ray::SEC_CHACHA20_POLY1305;
+	else if (security == "none")
+		security_ = v2ray::SEC_NONE;
+	else
+		throw std::invalid_argument("Invalid security");
+}
+
+void VMessTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+{
+	visitor.Visit(*this);
+}
+
+std::unique_ptr<prx_tcp_socket> VMessTcpSocketNode::NewTcpSocket()
+{
+	Cryptor cryptor = CryptoFactory(security_str_);
+	return std::make_unique<v2ray::vmess_tcp_socket>(Base().NewTcpSocket(), server_endpoint_, uid_, security_, std::move(cryptor.encryptor), std::move(cryptor.decryptor));
 }
 
 void RawUdpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)

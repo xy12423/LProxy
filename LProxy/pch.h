@@ -60,9 +60,11 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 namespace asio = boost::asio;
 namespace ptree = boost::property_tree;
 
+#define CRYPTOPP_ENABLE_NAMESPACE_WEAK 1
 #include <cryptopp/cryptlib.h>
 #include <cryptopp/aes.h>
 #include <cryptopp/gcm.h>
+#include <cryptopp/chachapoly.h>
 #include <cryptopp/modes.h>
 #include <cryptopp/md5.h>
 
@@ -74,6 +76,7 @@ namespace ptree = boost::property_tree;
 #include <libprxsocket/socket_ss_crypto.h>
 #include <libprxsocket/socket_ssr_auth.h>
 #include <libprxsocket/socket_ssr_obfs.h>
+#include <libprxsocket/socket_vmess.h>
 #include <libprxsocket/random_generator.h>
 
 using namespace prxsocket;

@@ -158,6 +158,19 @@ private:
 	std::string param_;
 };
 
+class VMessTcpSocketNode : public LayeredTcpSocketNode
+{
+public:
+	VMessTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint, const std::string &uid_uuid, const std::string &security);
+
+	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
+	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
+private:
+	endpoint server_endpoint_;
+	uint8_t uid_[16], security_;
+	std::string security_str_;
+};
+
 class UdpSocketNode : public ServerConfigurationNode
 {
 public:

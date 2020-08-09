@@ -152,7 +152,17 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 					args.get<std::string>("param")
 					);
 			}
-		}
+		},
+		{"vmess", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
+			{
+				return std::make_unique<VMessTcpSocketNode>(
+					LoadTcpSocketNode(args.get_child("parent")),
+					StringToEndpoint(args.get<std::string>("server"), 10086),
+					args.get<std::string>("uid"),
+					args.get<std::string>("security")
+					);
+			}
+		},
 	},
 	udp_socket_node_factories_{
 		{"ref", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>

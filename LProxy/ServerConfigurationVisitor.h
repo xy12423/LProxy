@@ -22,6 +22,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 class ServerConfigurationNode;
 
 class ObjectReferenceNode;
+
 class RawTcpSocketNode;
 class HttpTcpSocketNode;
 class Socks5TcpSocketNode;
@@ -30,10 +31,13 @@ class SSTcpSocketNode;
 class SSCryptoTcpSocketNode;
 class SSRAuthAes128Sha1TcpSocketNode;
 class SSRHttpSimpleTcpSocketNode;
+class VMessTcpSocketNode;
+
 class RawUdpSocketNode;
 class Socks5UdpSocketNode;
 class SSUdpSocketNode;
 class SSCryptoUdpSocketNode;
+
 class RawListenerNode;
 class Socks5ListenerNode;
 class ObfsWebsockListenerNode;
@@ -43,6 +47,7 @@ class ServerConfigurationVisitor
 {
 public:
 	virtual void Visit(ObjectReferenceNode &node) = 0;
+
 	virtual void Visit(RawTcpSocketNode &node) = 0;
 	virtual void Visit(HttpTcpSocketNode &node) = 0;
 	virtual void Visit(Socks5TcpSocketNode &node) = 0;
@@ -51,10 +56,13 @@ public:
 	virtual void Visit(SSCryptoTcpSocketNode &node) = 0;
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) = 0;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) = 0;
+	virtual void Visit(VMessTcpSocketNode &node) = 0;
+
 	virtual void Visit(RawUdpSocketNode &node) = 0;
 	virtual void Visit(Socks5UdpSocketNode &node) = 0;
 	virtual void Visit(SSUdpSocketNode &node) = 0;
 	virtual void Visit(SSCryptoUdpSocketNode &node) = 0;
+
 	virtual void Visit(RawListenerNode &node) = 0;
 	virtual void Visit(Socks5ListenerNode &node) = 0;
 	virtual void Visit(ObfsWebsockListenerNode &node) = 0;
@@ -67,6 +75,7 @@ public:
 	NameResolvingVisitor(const std::unordered_map<std::string, ServerConfigurationNode *> &named_nodes) :named_nodes_(named_nodes) {}
 
 	virtual void Visit(ObjectReferenceNode &node) override;
+
 	virtual void Visit(RawTcpSocketNode &node) override;
 	virtual void Visit(HttpTcpSocketNode &node) override;
 	virtual void Visit(Socks5TcpSocketNode &node) override;
@@ -75,10 +84,13 @@ public:
 	virtual void Visit(SSCryptoTcpSocketNode &node) override;
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) override;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) override;
+	virtual void Visit(VMessTcpSocketNode &node) override;
+
 	virtual void Visit(RawUdpSocketNode &node) override;
 	virtual void Visit(Socks5UdpSocketNode &node) override;
 	virtual void Visit(SSUdpSocketNode &node) override;
 	virtual void Visit(SSCryptoUdpSocketNode &node) override;
+
 	virtual void Visit(RawListenerNode &node) override;
 	virtual void Visit(Socks5ListenerNode &node) override;
 	virtual void Visit(ObfsWebsockListenerNode &node) override;
@@ -92,6 +104,7 @@ class ValidatingVisitor : public ServerConfigurationVisitor
 {
 public:
 	virtual void Visit(ObjectReferenceNode &node) override;
+
 	virtual void Visit(RawTcpSocketNode &node) override;
 	virtual void Visit(HttpTcpSocketNode &node) override;
 	virtual void Visit(Socks5TcpSocketNode &node) override;
@@ -100,10 +113,13 @@ public:
 	virtual void Visit(SSCryptoTcpSocketNode &node) override;
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) override;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) override;
+	virtual void Visit(VMessTcpSocketNode &node) override;
+
 	virtual void Visit(RawUdpSocketNode &node) override;
 	virtual void Visit(Socks5UdpSocketNode &node) override;
 	virtual void Visit(SSUdpSocketNode &node) override;
 	virtual void Visit(SSCryptoUdpSocketNode &node) override;
+
 	virtual void Visit(RawListenerNode &node) override;
 	virtual void Visit(Socks5ListenerNode &node) override;
 	virtual void Visit(ObfsWebsockListenerNode &node) override;

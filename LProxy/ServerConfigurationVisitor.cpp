@@ -95,6 +95,14 @@ void NameResolvingVisitor::Visit(SSRHttpSimpleTcpSocketNode &node)
 	return_value_ = nullptr;
 }
 
+void NameResolvingVisitor::Visit(VMessTcpSocketNode &node)
+{
+	node.BaseNode()->AcceptVisitor(*this);
+	if (return_value_ != nullptr)
+		node.SetBaseNode(return_value_);
+	return_value_ = nullptr;
+}
+
 void NameResolvingVisitor::Visit(RawUdpSocketNode &node)
 {
 	return_value_ = nullptr;
@@ -216,6 +224,12 @@ void ValidatingVisitor::Visit(SSRAuthAes128Sha1TcpSocketNode &node)
 }
 
 void ValidatingVisitor::Visit(SSRHttpSimpleTcpSocketNode &node)
+{
+	node.Validate();
+	node.BaseNode()->AcceptVisitor(*this);
+}
+
+void ValidatingVisitor::Visit(VMessTcpSocketNode &node)
 {
 	node.Validate();
 	node.BaseNode()->AcceptVisitor(*this);
