@@ -891,12 +891,12 @@ error_code Socks5Session::ParseUdp(const char *recv, size_t recvSize, endpoint &
 
 		for (int i = 0; i < 3; i++)
 			if (recv[i] != 0)
-				return WARN_OPERATION_FAILURE;
+				return ERR_OPERATION_FAILURE;
 
 		address dst_addr;
 		size_t addr_size = dst_addr.from_socks5(recv + 3);
 		if (addr_size == 0 || 5 + addr_size >= recvSize)
-			return WARN_OPERATION_FAILURE;
+			return ERR_OPERATION_FAILURE;
 
 		ep = endpoint(
 			std::move(dst_addr),
@@ -907,7 +907,7 @@ error_code Socks5Session::ParseUdp(const char *recv, size_t recvSize, endpoint &
 	}
 	catch (std::exception &)
 	{
-		return WARN_OPERATION_FAILURE;
+		return ERR_OPERATION_FAILURE;
 	}
 	return 0;
 }
