@@ -163,6 +163,28 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 					);
 			}
 		},
+		{"weight_switch", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
+			{
+				WeightBasedSwitchTcpSocketNode::Container parents;
+				for (const auto &node : args.get_child("parents"))
+				{
+					const auto &parent = node.second;
+					parents.emplace_back(parent.get<unsigned int>("weight"), LoadTcpSocketNode(parent.get_child("parent")));
+				}
+				std::string mode_str = args.get<std::string>("mode", "sequential");
+				WeightBasedSwitchTcpSocketNode::Modes mode;
+				if (mode_str == "sequential")
+					mode = WeightBasedSwitchTcpSocketNode::Modes::SEQUENTIAL;
+				else if (mode_str == "random")
+					mode = WeightBasedSwitchTcpSocketNode::Modes::RANDOM;
+				else
+					mode = WeightBasedSwitchTcpSocketNode::Modes::SEQUENTIAL;
+				return std::make_unique<WeightBasedSwitchTcpSocketNode>(
+					std::move(parents),
+					mode
+					);
+			}
+		},
 	},
 	udp_socket_node_factories_{
 		{"ref", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>

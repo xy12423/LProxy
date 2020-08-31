@@ -239,7 +239,7 @@ namespace
 
 	std::vector<char> StringToSSKey(const std::string &password, const std::string &method)
 	{
-		static std::unordered_map<std::string, std::function<std::vector<char>(const std::string &)>> key_gens = {
+		static const std::unordered_map<std::string, std::function<std::vector<char>(const std::string &)>> key_gens = {
 			{"aes-128-ctr", [](const std::string &key)->std::vector<char> { return StringToSSKey<128 / 8>(key); }},
 			{"aes-256-ctr", [](const std::string &key)->std::vector<char> { return StringToSSKey<256 / 8>(key); }},
 			{"aes-128-cfb", [](const std::string &key)->std::vector<char> { return StringToSSKey<128 / 8>(key); }},
@@ -281,7 +281,7 @@ namespace
 
 	Cryptor CryptoFactory(const std::string &method)
 	{
-		static std::unordered_map<std::string, std::function<Cryptor()>> factories = {
+		static const std::unordered_map<std::string, std::function<Cryptor()>> factories = {
 			{"none", []()->Cryptor { return Cryptor{ std::make_unique<encryptor_plain>(), std::make_unique<decryptor_plain>() }; }},
 			{"aes-128-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 128, 128>(); }},
 			{"aes-256-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 256, 128>(); }},
@@ -365,6 +365,11 @@ void ObjectReferenceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 	visitor.Visit(*this);
 }
 
+RawTcpSocketNode::RawTcpSocketNode(asio::io_context &io_context)
+	:io_context_(io_context)
+{
+}
+
 void RawTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
@@ -375,6 +380,12 @@ std::unique_ptr<prx_tcp_socket> RawTcpSocketNode::NewTcpSocket()
 	return std::make_unique<raw_tcp_socket>(io_context_);
 }
 
+HttpTcpSocketNode::HttpTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:LayeredTcpSocketNode(base),
+	server_endpoint_(server_endpoint)
+{
+}
+
 void HttpTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
@@ -383,6 +394,12 @@ void HttpTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 std::unique_ptr<prx_tcp_socket> HttpTcpSocketNode::NewTcpSocket()
 {
 	return std::make_unique<http_tcp_socket>(Base().NewTcpSocket(), server_endpoint_);
+}
+
+Socks5TcpSocketNode::Socks5TcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:LayeredTcpSocketNode(base),
+	server_endpoint_(server_endpoint)
+{
 }
 
 void Socks5TcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -412,6 +429,12 @@ void ObfsWebsockTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor
 std::unique_ptr<prx_tcp_socket> ObfsWebsockTcpSocketNode::NewTcpSocket()
 {
 	return std::make_unique<obfs_websock_tcp_socket>(Base().NewTcpSocket(), key_);
+}
+
+SSTcpSocketNode::SSTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:LayeredTcpSocketNode(base),
+	server_endpoint_(server_endpoint)
+{
 }
 
 void SSTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -445,6 +468,11 @@ std::unique_ptr<prx_tcp_socket> SSCryptoTcpSocketNode::NewTcpSocket()
 	return NewSSCryptoTcpSocket();
 }
 
+SSRAuthAes128Sha1TcpSocketNode::SSRAuthAes128Sha1TcpSocketNode(ServerConfigurationNode *base, const std::string &param)
+	:LayeredNodeTemplate(base), param_(param)
+{
+}
+
 void SSRAuthAes128Sha1TcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
@@ -453,6 +481,11 @@ void SSRAuthAes128Sha1TcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &v
 std::unique_ptr<prx_tcp_socket> SSRAuthAes128Sha1TcpSocketNode::NewTcpSocket()
 {
 	return std::make_unique<ssr::ssr_auth_aes128_sha1_tcp_socket>(Base().NewSSCryptoTcpSocket(), GetSSRAuthAes128Sha1SharedServerData(param_));
+}
+
+SSRHttpSimpleTcpSocketNode::SSRHttpSimpleTcpSocketNode(ServerConfigurationNode *base, const std::string &param)
+	:LayeredTcpSocketNode(base), param_(param)
+{
 }
 
 void SSRHttpSimpleTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -504,6 +537,74 @@ std::unique_ptr<prx_tcp_socket> VMessTcpSocketNode::NewTcpSocket()
 	return std::make_unique<v2ray::vmess_tcp_socket>(Base().NewTcpSocket(), server_endpoint_, uid_, security_, std::move(cryptor.encryptor), std::move(cryptor.decryptor));
 }
 
+WeightBasedSwitchTcpSocketNode::WeightBasedSwitchTcpSocketNode(Container &&base, Modes mode)
+	:base_(std::move(base)), mode_(mode), itr_(base_.begin()), counter_(0), total_(0)
+{
+	if (base_.empty())
+		throw std::invalid_argument("Need at least one base");
+	for (const auto &p : base_)
+	{
+		if (p.first == 0)
+			throw std::invalid_argument("Weight must be more than 1");
+		total_ += p.first;
+	}
+}
+
+void WeightBasedSwitchTcpSocketNode::Validate() const
+{
+	for (const auto &p : base_)
+		if (dynamic_cast<const TcpSocketNode *>(p.second) == nullptr)
+			throw std::invalid_argument("Invalid base");
+}
+
+void WeightBasedSwitchTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+{
+	visitor.Visit(*this);
+}
+
+std::unique_ptr<prx_tcp_socket> WeightBasedSwitchTcpSocketNode::NewTcpSocket()
+{
+	switch (mode_)
+	{
+	case Modes::SEQUENTIAL:
+	{
+		std::lock_guard<std::recursive_mutex> lock(mutex_);
+		std::unique_ptr<prx_tcp_socket> socket = static_cast<TcpSocketNode *>(itr_->second)->NewTcpSocket();
+		counter_ += 1;
+		if (counter_ >= itr_->first)
+		{
+			++itr_;
+			if (itr_ == base_.end())
+				itr_ = base_.begin();
+			counter_ = 0;
+		}
+		return socket;
+	}
+	case Modes::RANDOM:
+	{
+		thread_local static std::default_random_engine generator(std::random_device{}());
+		std::uniform_int_distribution<unsigned int> distribution(0, total_ - 1);
+		unsigned int counter = distribution(generator);
+		Iterator itr = base_.begin();
+		while (counter >= itr->first)
+		{
+			counter -= itr->first;
+			++itr;
+			assert(itr_ != base_.end());
+		}
+		return static_cast<TcpSocketNode *>(itr->second)->NewTcpSocket();
+	}
+	default:
+		assert(false);
+		throw std::invalid_argument("Invalid mode");
+	}
+}
+
+RawUdpSocketNode::RawUdpSocketNode(asio::io_context &io_context)
+	:io_context_(io_context)
+{
+}
+
 void RawUdpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
@@ -514,11 +615,23 @@ std::unique_ptr<prx_udp_socket> RawUdpSocketNode::NewUdpSocket()
 	return std::make_unique<raw_udp_socket>(io_context_);
 }
 
+Socks5UdpSocketNode::Socks5UdpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:base_(base), udp_base_(nullptr),
+	server_endpoint_(server_endpoint)
+{
+}
+
+Socks5UdpSocketNode::Socks5UdpSocketNode(ServerConfigurationNode *base, ServerConfigurationNode *udp_base, const endpoint &server_endpoint)
+	:base_(base), udp_base_(udp_base),
+	server_endpoint_(server_endpoint)
+{
+}
+
 void Socks5UdpSocketNode::Validate() const
 {
-	if (dynamic_cast<TcpSocketNode *>(base_) == nullptr)
+	if (dynamic_cast<const TcpSocketNode *>(base_) == nullptr)
 		throw std::invalid_argument("Invalid base for base of Socks5UdpSocket");
-	if (udp_base_ && dynamic_cast<UdpSocketNode *>(udp_base_) == nullptr)
+	if (udp_base_ && dynamic_cast<const UdpSocketNode *>(udp_base_) == nullptr)
 		throw std::invalid_argument("Invalid base for udp base of Socks5UdpSocket");
 }
 
@@ -533,6 +646,12 @@ std::unique_ptr<prx_udp_socket> Socks5UdpSocketNode::NewUdpSocket()
 		return std::make_unique<socks5_udp_socket>(static_cast<TcpSocketNode *>(base_)->NewTcpSocket(), static_cast<UdpSocketNode *>(udp_base_)->NewUdpSocket(), server_endpoint_);
 	else
 		return std::make_unique<socks5_udp_socket>(static_cast<TcpSocketNode *>(base_)->NewTcpSocket(), server_endpoint_);
+}
+
+SSUdpSocketNode::SSUdpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:LayeredUdpSocketNode(base),
+	server_endpoint_(server_endpoint)
+{
 }
 
 void SSUdpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -561,6 +680,11 @@ std::unique_ptr<prx_udp_socket> SSCryptoUdpSocketNode::NewUdpSocket()
 	return NewSSCryptoUdpSocket();
 }
 
+RawListenerNode::RawListenerNode(asio::io_context &io_context)
+	:io_context_(io_context)
+{
+}
+
 void RawListenerNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
@@ -569,6 +693,12 @@ void RawListenerNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 std::unique_ptr<prx_listener> RawListenerNode::NewListener()
 {
 	return std::make_unique<raw_listener>(io_context_);
+}
+
+Socks5ListenerNode::Socks5ListenerNode(ServerConfigurationNode *base, const endpoint &server_endpoint)
+	:LayeredNodeTemplate(base),
+	server_endpoint_(server_endpoint)
+{
 }
 
 void Socks5ListenerNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -628,14 +758,14 @@ void RootNode::Validate() const
 {
 	if (thread_count_ < 1 || thread_count_ > 16)
 		throw std::invalid_argument("Invalid thread count");
-	if (dynamic_cast<TcpSocketNode *>(downstream_tcp_socket_) == nullptr)
+	if (dynamic_cast<const TcpSocketNode *>(downstream_tcp_socket_) == nullptr)
 		throw std::invalid_argument("Invalid downstream tcp socket");
-	if (dynamic_cast<UdpSocketNode *>(upstream_udp_socket_) == nullptr)
+	if (dynamic_cast<const UdpSocketNode *>(upstream_udp_socket_) == nullptr)
 		throw std::invalid_argument("Invalid upstream udp socket");
-	if (dynamic_cast<UdpSocketNode *>(downstream_udp_socket_) == nullptr)
+	if (dynamic_cast<const UdpSocketNode *>(downstream_udp_socket_) == nullptr)
 		throw std::invalid_argument("Invalid downstream udp socket");
-	if (dynamic_cast<ListenerNode *>(upstream_listener_) == nullptr)
+	if (dynamic_cast<const ListenerNode *>(upstream_listener_) == nullptr)
 		throw std::invalid_argument("Invalid upstream listener");
-	if (dynamic_cast<ListenerNode *>(downstream_listener_) == nullptr)
+	if (dynamic_cast<const ListenerNode *>(downstream_listener_) == nullptr)
 		throw std::invalid_argument("Invalid downstream listener");
 }

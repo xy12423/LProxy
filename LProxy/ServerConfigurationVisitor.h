@@ -32,6 +32,7 @@ class SSCryptoTcpSocketNode;
 class SSRAuthAes128Sha1TcpSocketNode;
 class SSRHttpSimpleTcpSocketNode;
 class VMessTcpSocketNode;
+class WeightBasedSwitchTcpSocketNode;
 
 class RawUdpSocketNode;
 class Socks5UdpSocketNode;
@@ -57,6 +58,7 @@ public:
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) = 0;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) = 0;
 	virtual void Visit(VMessTcpSocketNode &node) = 0;
+	virtual void Visit(WeightBasedSwitchTcpSocketNode &node) = 0;
 
 	virtual void Visit(RawUdpSocketNode &node) = 0;
 	virtual void Visit(Socks5UdpSocketNode &node) = 0;
@@ -85,6 +87,7 @@ public:
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) override;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) override;
 	virtual void Visit(VMessTcpSocketNode &node) override;
+	virtual void Visit(WeightBasedSwitchTcpSocketNode &node) override;
 
 	virtual void Visit(RawUdpSocketNode &node) override;
 	virtual void Visit(Socks5UdpSocketNode &node) override;
@@ -114,6 +117,7 @@ public:
 	virtual void Visit(SSRAuthAes128Sha1TcpSocketNode &node) override;
 	virtual void Visit(SSRHttpSimpleTcpSocketNode &node) override;
 	virtual void Visit(VMessTcpSocketNode &node) override;
+	virtual void Visit(WeightBasedSwitchTcpSocketNode &node) override;
 
 	virtual void Visit(RawUdpSocketNode &node) override;
 	virtual void Visit(Socks5UdpSocketNode &node) override;
