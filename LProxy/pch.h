@@ -17,6 +17,8 @@ You should have received a copy of the GNU General Public License
 along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 */
 
+#pragma once
+
 #ifndef PCH_H
 #define PCH_H
 

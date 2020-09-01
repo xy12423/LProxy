@@ -215,6 +215,8 @@ void AcceptorManager::AsyncAcceptError(const std::shared_ptr<AcceptorItem> &item
 	for (const auto &p : item->prepCallbacks)
 		p(err, kEpEmpty);
 
+	item->acceptor->close(err);
+
 	auto itr = activeAcceptors_.begin(), itrEnd = activeAcceptors_.end();
 	for (; itr != itrEnd; ++itr)
 		if (item == itr->second)

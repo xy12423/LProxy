@@ -257,8 +257,8 @@ namespace
 
 	struct Cryptor
 	{
-		std::unique_ptr<encryptor> encryptor;
-		std::unique_ptr<decryptor> decryptor;
+		std::unique_ptr<encryptor> enc;
+		std::unique_ptr<decryptor> dec;
 	};
 
 	template <typename BaseCrypto, size_t KeySize, size_t IvSize>
@@ -455,7 +455,7 @@ SSCryptoTcpSocketNode::SSCryptoTcpSocketNode(ServerConfigurationNode *base, cons
 std::unique_ptr<ss::ss_crypto_tcp_socket> SSCryptoTcpSocketNode::NewSSCryptoTcpSocket()
 {
 	Cryptor cryptor = CryptoFactory(method_);
-	return std::make_unique<ss::ss_crypto_tcp_socket>(Base().NewTcpSocket(), key_, std::move(cryptor.encryptor), std::move(cryptor.decryptor));
+	return std::make_unique<ss::ss_crypto_tcp_socket>(Base().NewTcpSocket(), key_, std::move(cryptor.enc), std::move(cryptor.dec));
 }
 
 void SSCryptoTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
@@ -534,7 +534,7 @@ void VMessTcpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 std::unique_ptr<prx_tcp_socket> VMessTcpSocketNode::NewTcpSocket()
 {
 	Cryptor cryptor = CryptoFactory(security_str_);
-	return std::make_unique<v2ray::vmess_tcp_socket>(Base().NewTcpSocket(), server_endpoint_, uid_, security_, std::move(cryptor.encryptor), std::move(cryptor.decryptor));
+	return std::make_unique<v2ray::vmess_tcp_socket>(Base().NewTcpSocket(), server_endpoint_, uid_, security_, std::move(cryptor.enc), std::move(cryptor.dec));
 }
 
 WeightBasedSwitchTcpSocketNode::WeightBasedSwitchTcpSocketNode(Container &&base, Modes mode)
@@ -667,7 +667,7 @@ SSCryptoUdpSocketNode::SSCryptoUdpSocketNode(ServerConfigurationNode *base, cons
 std::unique_ptr<ss::ss_crypto_udp_socket> SSCryptoUdpSocketNode::NewSSCryptoUdpSocket()
 {
 	Cryptor cryptor = CryptoFactory(method_);
-	return std::make_unique<ss::ss_crypto_udp_socket>(Base().NewUdpSocket(), key_, std::move(cryptor.encryptor), std::move(cryptor.decryptor));
+	return std::make_unique<ss::ss_crypto_udp_socket>(Base().NewUdpSocket(), key_, std::move(cryptor.enc), std::move(cryptor.dec));
 }
 
 void SSCryptoUdpSocketNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
