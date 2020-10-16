@@ -8,7 +8,7 @@ else
 	CXXFLAGS += -g3 -O0 -D_DEBUG
 endif
 
-objects = AcceptorManager.o LoadBalancingManager.o LoadBalancingSocket.o ProxySession.o Socks4Session.o Socks5Session.o ProxyServer.o ServerConfiguration.o ServerConfigurationNodes.o ServerConfigurationVisitor.o main.o
+objects = AcceptorManager.o ProxySession.o Socks4Session.o Socks5Session.o ProxyServer.o ServerConfiguration.o ServerConfigurationNodes.o ServerConfigurationVisitor.o main.o
 
 all : lproxy
 
@@ -16,10 +16,6 @@ lproxy : $(objects)
 	$(CXX) $(objects) $(LFLAGS) -o lproxy
 AcceptorManager.o : pch.h AcceptorManager.h AcceptorManager.cpp
 	$(CXX) AcceptorManager.cpp $(CXXFLAGS) -o AcceptorManager.o
-LoadBalancingManager.o : pch.h LoadBalancingManager.h LoadBalancingManager.cpp
-	$(CXX) LoadBalancingManager.cpp $(CXXFLAGS) -o LoadBalancingManager.o
-LoadBalancingSocket.o : pch.h LoadBalancingManager.h LoadBalancingSocket.h LoadBalancingSocket.cpp
-	$(CXX) LoadBalancingSocket.cpp $(CXXFLAGS) -o LoadBalancingSocket.o
 ProxySession.o : pch.h ProxySession.h ProxyServer.h ProxySession.cpp
 	$(CXX) ProxySession.cpp $(CXXFLAGS) -o ProxySession.o
 Socks4Session.o : pch.h ProxySession.h AcceptorManager.h Socks4Session.h ProxyServer.h Socks4Session.cpp
@@ -34,7 +30,7 @@ ServerConfigurationNodes.o : pch.h ServerConfigurationNode.h ServerConfiguration
 	$(CXX) ServerConfigurationNodes.cpp ${CXXFLAGS} -o ServerConfigurationNodes.o
 ServerConfigurationVisitor.o : pch.h ServerConfigurationNode.h ServerConfigurationNodes.h ServerConfigurationVisitor.h ServerConfigurationVisitor.cpp
 	$(CXX) ServerConfigurationVisitor.cpp ${CXXFLAGS} -o ServerConfigurationVisitor.o
-main.o : pch.h ProxyServer.h AcceptorManager.h LoadBalancingManager.h LoadBalancingSocket.h main.cpp
+main.o : pch.h ProxyServer.h AcceptorManager.h ServerConfiguration.h main.cpp
 	$(CXX) main.cpp $(CXXFLAGS) -o main.o
 
 clean :
