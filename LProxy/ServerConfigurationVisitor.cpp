@@ -107,9 +107,9 @@ void NameResolvingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
 	for (auto itr = node.Begin(), itr_end = node.End(); itr != itr_end; ++itr)
 	{
-		itr->second->AcceptVisitor(*this);
+		itr->node->AcceptVisitor(*this);
 		if (return_value_ != nullptr)
-			itr->second = return_value_;
+			itr->node = return_value_;
 	}
 	return_value_ = nullptr;
 }
@@ -250,7 +250,7 @@ void ValidatingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
 	node.Validate();
 	for (auto itr = node.Begin(), itr_end = node.End(); itr != itr_end; ++itr)
-		itr->second->AcceptVisitor(*this);
+		itr->node->AcceptVisitor(*this);
 }
 
 void ValidatingVisitor::Visit(RawUdpSocketNode &node)

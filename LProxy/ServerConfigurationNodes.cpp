@@ -538,22 +538,35 @@ std::unique_ptr<prx_tcp_socket> VMessTcpSocketNode::NewTcpSocket()
 }
 
 WeightBasedSwitchTcpSocketNode::WeightBasedSwitchTcpSocketNode(Container &&base, Modes mode)
-	:base_(std::move(base)), mode_(mode), itr_(base_.begin()), counter_(0), total_(0)
+	:base_(std::move(base)), mode_(mode), itr_(base_.begin()), total_(0)
 {
 	if (base_.empty())
 		throw std::invalid_argument("Need at least one base");
 	for (const auto &p : base_)
 	{
-		if (p.first == 0)
-			throw std::invalid_argument("Weight must be more than 1");
-		total_ += p.first;
+		if (p.weight < 0)
+			throw std::invalid_argument("Weight must not be negative");
+		total_ += p.weight;
+	}
+	if (total_ == 0)
+		throw std::invalid_argument("Total weight must be more than 1");
+
+	for (auto itr = base_.begin(), itr_end = base_.end(); itr != itr_end; ++itr)
+		itr->acc = 0;
+	itr_->acc = itr_->weight;
+	while (itr_->acc < 1)
+	{
+		++itr_;
+		if (itr_ == base_.end())
+			itr_ = base_.begin();
+		itr_->acc += itr_->weight;
 	}
 }
 
 void WeightBasedSwitchTcpSocketNode::Validate() const
 {
 	for (const auto &p : base_)
-		if (dynamic_cast<const TcpSocketNode *>(p.second) == nullptr)
+		if (dynamic_cast<const TcpSocketNode *>(p.node) == nullptr)
 			throw std::invalid_argument("Invalid base");
 }
 
@@ -569,30 +582,30 @@ std::unique_ptr<prx_tcp_socket> WeightBasedSwitchTcpSocketNode::NewTcpSocket()
 	case Modes::SEQUENTIAL:
 	{
 		std::lock_guard<std::recursive_mutex> lock(mutex_);
-		std::unique_ptr<prx_tcp_socket> socket = static_cast<TcpSocketNode *>(itr_->second)->NewTcpSocket();
-		counter_ += 1;
-		if (counter_ >= itr_->first)
+		std::unique_ptr<prx_tcp_socket> socket = static_cast<TcpSocketNode *>(itr_->node)->NewTcpSocket();
+		itr_->acc -= 1;
+		while (itr_->acc < 1)
 		{
 			++itr_;
 			if (itr_ == base_.end())
 				itr_ = base_.begin();
-			counter_ = 0;
+			itr_->acc += itr_->weight;
 		}
 		return socket;
 	}
 	case Modes::RANDOM:
 	{
 		thread_local static std::default_random_engine generator(std::random_device{}());
-		std::uniform_int_distribution<unsigned int> distribution(0, total_ - 1);
-		unsigned int counter = distribution(generator);
+		std::uniform_real_distribution<double> distribution(0, total_);
+		double counter = distribution(generator);
 		Iterator itr = base_.begin();
-		while (counter >= itr->first)
+		while (counter >= itr->weight)
 		{
-			counter -= itr->first;
+			counter -= itr->weight;
 			++itr;
 			assert(itr_ != base_.end());
 		}
-		return static_cast<TcpSocketNode *>(itr->second)->NewTcpSocket();
+		return static_cast<TcpSocketNode *>(itr->node)->NewTcpSocket();
 	}
 	default:
 		assert(false);

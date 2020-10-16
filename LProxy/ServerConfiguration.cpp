@@ -169,7 +169,7 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 				for (const auto &node : args.get_child("parents"))
 				{
 					const auto &parent = node.second;
-					parents.emplace_back(parent.get<unsigned int>("weight"), LoadTcpSocketNode(parent.get_child("parent")));
+					parents.push_back(WeightBasedSwitchTcpSocketNode::BaseItem{ parent.get<double>("weight"), LoadTcpSocketNode(parent.get_child("parent")) });
 				}
 				std::string mode_str = args.get<std::string>("mode", "sequential");
 				WeightBasedSwitchTcpSocketNode::Modes mode;
@@ -344,7 +344,7 @@ ServerConfigurationNode *ServerConfiguration::LoadUdpSocketNode(const ptree::ptr
 	}
 	catch (const std::out_of_range &)
 	{
-		throw std::invalid_argument("Invalid tcp socket type " + args.get<std::string>("type"));
+		throw std::invalid_argument("Invalid udp socket type " + args.get<std::string>("type"));
 	}
 	ServerConfigurationNode *node_ptr = node.get();
 	nodes_.push_back(std::move(node));
@@ -362,7 +362,7 @@ ServerConfigurationNode *ServerConfiguration::LoadListenerNode(const ptree::ptre
 	}
 	catch (const std::out_of_range &)
 	{
-		throw std::invalid_argument("Invalid tcp socket type " + args.get<std::string>("type"));
+		throw std::invalid_argument("Invalid listener type " + args.get<std::string>("type"));
 	}
 	ServerConfigurationNode *node_ptr = node.get();
 	nodes_.push_back(std::move(node));

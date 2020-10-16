@@ -168,7 +168,15 @@ private:
 class WeightBasedSwitchTcpSocketNode : public TcpSocketNode
 {
 public:
-	using Container = std::vector<std::pair<unsigned int, ServerConfigurationNode *>>;
+	struct BaseItem
+	{
+		double weight;
+		ServerConfigurationNode *node;
+
+		double acc = 0;
+	};
+
+	using Container = std::vector<BaseItem>;
 	using Iterator = Container::iterator;
 
 	enum class Modes
@@ -192,7 +200,7 @@ private:
 
 	std::recursive_mutex mutex_;
 	Iterator itr_;
-	unsigned int counter_, total_;
+	double total_;
 };
 
 class UdpSocketNode : public ServerConfigurationNode
