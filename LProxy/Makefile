@@ -1,6 +1,6 @@
 CXX = g++
-CXXFLAGS = -c -pthread -I ~/boost -I ~/libprxsocket -std=c++14
-LFLAGS = -pthread -L ~/boost/stage/lib -L ~/libprxsocket/libprxsocket -lprxsocket -lboost_system -lcryptopp -static-libstdc++
+CXXFLAGS = -c -pthread -I ~/boost -I ~/libprxsocket -std=c++17
+LFLAGS = -pthread -L ~/boost/stage/lib -L ~/libprxsocket/libprxsocket -lprxsocket -lboost_system -lcryptopp
 
 ifeq ($(RELEASE), 1)
 	CXXFLAGS += -g3 -O2 -DNDEBUG
