@@ -208,6 +208,7 @@ void Socks5Session::ReceiveRequest()
 				BeginUdpAssociation(ep);
 				break;
 			}
+			[[fallthrough]];
 		default:
 			Stop();
 			return;
@@ -229,7 +230,7 @@ void Socks5Session::BeginConnect(const endpoint &ep)
 			EndWithError(err);
 			return;
 		}
-		downTcp_->async_connect(ep, [this, self = std::move(self)](error_code err)
+		downTcp_->async_connect(ep, [this, self](error_code err)
 		{
 			if (err)
 			{
@@ -278,7 +279,7 @@ void Socks5Session::BeginBind(const endpoint &ep)
 			EndWithError(err);
 			return;
 		}
-		SendSocks5(0, acceptorLocalEp, [this, self = std::move(self)](error_code err)
+		SendSocks5(0, acceptorLocalEp, [this, self](error_code err)
 		{
 			if (err)
 			{
@@ -374,7 +375,7 @@ void Socks5Session::BeginUdpAssociationWithOpen(const endpoint &ep)
 			EndWithError(err);
 			return;
 		}
-		downUdp_->async_open([this, self = std::move(self)](error_code err)
+		downUdp_->async_open([this, self](error_code err)
 		{
 			if (err)
 			{
@@ -398,7 +399,7 @@ void Socks5Session::BeginUdpAssociationWithBind(const endpoint &ep)
 			return;
 		}
 		downUdp_->async_bind(ep,
-			[this, self = std::move(self)](error_code err)
+			[this, self](error_code err)
 		{
 			if (err)
 			{
@@ -447,7 +448,7 @@ void Socks5Session::EndUdpAssociation()
 
 			if (replySent_.exchange(true))
 				return;
-			SendSocks5(0, downUdpLocalEp, [this, self = std::move(self)](error_code err)
+			SendSocks5(0, downUdpLocalEp, [this, self](error_code err)
 			{
 				if (err)
 				{
@@ -629,15 +630,15 @@ void Socks5Session::RelayUp()
 	{
 		if (err)
 		{
-			Stop();
+			downTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
 		downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
-			[this, self = std::move(self), transferred](error_code err)
+			[this, self, transferred](error_code err)
 		{
 			if (err)
 			{
-				Stop();
+				upTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 				return;
 			}
 			AddBytesDown(transferred);
@@ -654,15 +655,15 @@ void Socks5Session::RelayDown()
 	{
 		if (err)
 		{
-			Stop();
+			upTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
 		upTcp_->async_write(const_buffer(downBuf_.get(), transferred),
-			[this, self = std::move(self), transferred](error_code err)
+			[this, self, transferred](error_code err)
 		{
 			if (err)
 			{
-				Stop();
+				downTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 				return;
 			}
 			AddBytesUp(transferred);
@@ -685,7 +686,7 @@ void Socks5Session::ReadUpWhileAccept()
 		if (downTcp_)
 		{
 			downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
-				[this, self = std::move(self), transferred](error_code err)
+				[this, self, transferred](error_code err)
 			{
 				if (err)
 				{
@@ -731,7 +732,7 @@ void Socks5Session::RelayUpUdpOverTcp()
 
 		uint16_t size = (uint8_t)udpOverTcpBuf_[0] | ((uint8_t)udpOverTcpBuf_[1] << 8u);
 		upTcp_->async_read(mutable_buffer(udpOverTcpBuf_.get() + 2, size - 2),
-			[this, self = std::move(self), size](error_code err)
+			[this, self, size](error_code err)
 		{
 			if (err)
 			{
@@ -751,7 +752,7 @@ void Socks5Session::RelayUpUdpOverTcp()
 			}
 
 			downUdp_->async_send_to(dst, const_buffer(dataStartAt, dataSize),
-				[this, self = std::move(self), dataSize](error_code err)
+				[this, self, dataSize](error_code err)
 			{
 				if (err && !downUdp_->is_open())
 				{
@@ -794,7 +795,7 @@ void Socks5Session::RelayUpUdp()
 		}
 
 		downUdp_->async_send_to(dst, const_buffer(dataStartAt, dataSize),
-			[this, self = std::move(self), dataSize](error_code err)
+			[this, self, dataSize](error_code err)
 		{
 			if (err && !downUdp_->is_open())
 			{
@@ -840,7 +841,7 @@ void Socks5Session::RelayDownUdp()
 			if (upUdpRemoteEp_.port() != 0)
 			{
 				upUdp_->async_send_to(upUdpRemoteEp_, const_buffer(*buf),
-					[this, self = std::move(self), buf, transferred](error_code err)
+					[this, self, buf, transferred](error_code err)
 				{
 					if (err && !upUdp_->is_open())
 					{
@@ -863,7 +864,7 @@ void Socks5Session::RelayDownUdp()
 				(*buf)[1] = (uint8_t)(bufSize >> 8);
 
 				upTcp_->async_write(const_buffer(*buf),
-					[this, self = std::move(self), buf, transferred](error_code err)
+					[this, self, buf, transferred](error_code err)
 				{
 					if (err)
 					{

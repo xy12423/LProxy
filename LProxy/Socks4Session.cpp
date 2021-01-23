@@ -215,7 +215,7 @@ void Socks4Session::BeginConnect(const endpoint &ep)
 			EndWithError();
 			return;
 		}
-		downTcp_->async_connect(ep, [this, self = std::move(self)](error_code err)
+		downTcp_->async_connect(ep, [this, self](error_code err)
 		{
 			if (err)
 			{
@@ -259,7 +259,7 @@ void Socks4Session::BeginBind(const endpoint &ep)
 			EndWithError();
 			return;
 		}
-		SendResponse(90, acceptorLocalEp, [this, self = std::move(self), ep](error_code err)
+		SendResponse(90, acceptorLocalEp, [this, self, ep](error_code err)
 		{
 			if (err)
 			{
@@ -416,7 +416,7 @@ void Socks4Session::RelayUpBuf()
 	{
 		if (err)
 		{
-			Stop();
+			upTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 			return;
 		}
 		AddBytesDown(upBufPEnd_ - upBufP_);
@@ -433,15 +433,15 @@ void Socks4Session::RelayUp()
 	{
 		if (err)
 		{
-			Stop();
+			downTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
 		downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
-			[this, self = std::move(self), transferred](error_code err)
+			[this, self, transferred](error_code err)
 		{
 			if (err)
 			{
-				Stop();
+				upTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 				return;
 			}
 			AddBytesDown(transferred);
@@ -458,15 +458,15 @@ void Socks4Session::RelayDown()
 	{
 		if (err)
 		{
-			Stop();
+			upTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
 		upTcp_->async_write(const_buffer(downBuf_.get(), transferred),
-			[this, self = std::move(self), transferred](error_code err)
+			[this, self, transferred](error_code err)
 		{
 			if (err)
 			{
-				Stop();
+				downTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 				return;
 			}
 			AddBytesUp(transferred);
