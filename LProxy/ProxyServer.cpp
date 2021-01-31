@@ -85,8 +85,8 @@ void ProxyServer::PrintSession(const ProxySession &sess)
 {
 	std::lock_guard<std::recursive_mutex> lock(logMutex);
 	std::cout << sess.SessionType() << '\t';
-	std::cout << sess.UpstreamEndpoint().addr().to_string() << ':' << sess.UpstreamEndpoint().port() << '\t';
-	std::cout << sess.DownstreamEndpoint().addr().to_string() << ':' << sess.DownstreamEndpoint().port() << '\t';
+	std::cout << sess.UpstreamEndpoint().addr().to_uri_string() << ':' << sess.UpstreamEndpoint().port() << '\t';
+	std::cout << sess.DownstreamEndpoint().addr().to_uri_string() << ':' << sess.DownstreamEndpoint().port() << '\t';
 	std::cout << sess.TotalBytesUp() << " Bytes up\t";
 	std::cout << sess.TotalBytesDown() << " Bytes down" << std::endl;
 }
