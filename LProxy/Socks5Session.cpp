@@ -130,7 +130,7 @@ void Socks5Session::ReceiveMethodRequested()
 {
 	auto self = shared_from_this();
 
-	upTcp_->async_read(mutable_buffer(mutable_buffer(upBuf_.get() + 2, (uint8_t)upBuf_[1])),
+	upTcp_->async_read(mutable_buffer(upBuf_.get() + 2, (uint8_t)upBuf_[1]),
 		[this, self = std::move(self)](error_code err)
 	{
 		if (err)
