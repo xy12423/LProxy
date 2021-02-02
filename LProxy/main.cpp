@@ -22,6 +22,8 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 #include "AcceptorManager.h"
 #include "ServerConfiguration.h"
 
+extern std::recursive_mutex logMutex;
+
 void ltrim(std::string& str)
 {
 	if (str.empty())
@@ -50,19 +52,41 @@ class ConfigurableServer : public ProxyServer
 public:
 	ConfigurableServer(
 		asio::io_context &ioCtx,
-		ServerConfiguration &conf)
-		:ProxyServer(ioCtx, conf.UpstreamLocalEndpoint()), ioCtx_(ioCtx), configuration_(conf)
+		const std::shared_ptr<ServerConfiguration> &conf)
+		:ProxyServer(ioCtx, conf->UpstreamLocalEndpoint()), ioCtx_(ioCtx), configuration_(conf)
 	{
 	}
 
-	virtual std::unique_ptr<prx_listener> NewUpstreamAcceptor() override { return configuration_.NewUpstreamListener(); }
-	virtual std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket() override { return configuration_.NewUpstreamUdpSocket(); }
-	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() override { return configuration_.NewDownstreamTcpSocket(); }
-	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() override { return configuration_.NewDownstreamListener(); }
-	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() override { return configuration_.NewDownstreamUdpSocket(); }
+	void SetConfiguration(const std::shared_ptr<ServerConfiguration> &conf) { configuration_ = conf; }
+
+	virtual std::unique_ptr<prx_listener> NewUpstreamAcceptor() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->NewUpstreamListener();
+	}
+	virtual std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->NewUpstreamUdpSocket();
+	}
+	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->NewDownstreamTcpSocket();
+	}
+	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->NewDownstreamListener();
+	}
+	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->NewDownstreamUdpSocket();
+	}
 private:
 	asio::io_context &ioCtx_;
-	ServerConfiguration &configuration_;
+	std::shared_ptr<ServerConfiguration> configuration_;
 };
 
 void PrintPropertyTree(const ptree::ptree &node, int level = 0)
@@ -97,6 +121,7 @@ int main(int argc, char *argv[])
 			}
 			catch (std::exception &ex)
 			{
+				std::lock_guard<std::recursive_mutex> lock(logMutex);
 				std::cerr << ex.what() << std::endl;
 			}
 			catch (...) {}
@@ -109,10 +134,10 @@ int main(int argc, char *argv[])
 	ptree::read_json(configPath.c_str(), root);
 	//PrintPropertyTree(root);
 
-	std::unique_ptr<ServerConfiguration> conf;
+	std::shared_ptr<ServerConfiguration> conf;
 	try
 	{
-		conf = std::make_unique<ServerConfiguration>(iosrv, root);
+		conf = std::make_shared<ServerConfiguration>(iosrv, root);
 	}
 	catch (const std::exception &e)
 	{
@@ -127,8 +152,8 @@ int main(int argc, char *argv[])
 	while (worker_threads.size() < (size_t)conf->Workers())
 		worker_threads.emplace_back(worker_function); //Extra worker threads
 
-	std::unique_ptr<ProxyServer> server;
-	server = std::make_unique<ConfigurableServer>(iosrv, *conf);
+	std::unique_ptr<ConfigurableServer> server;
+	server = std::make_unique<ConfigurableServer>(iosrv, conf);
 	server->Start();
 
 	std::string cmd, arg;
@@ -143,6 +168,8 @@ int main(int argc, char *argv[])
 		{
 			arg.assign(cmd, pos + 1);
 			cmd.erase(pos);
+			ltrim(arg);
+			rtrim(cmd);
 		}
 
 		if (cmd == "exit")
@@ -152,6 +179,25 @@ int main(int argc, char *argv[])
 		else if (cmd == "list")
 		{
 			server->PrintSessions();
+		}
+		else if (cmd == "reload")
+		{
+			try
+			{
+				root.clear();
+				if (!arg.empty())
+					ptree::read_json(arg.c_str(), root);
+				else
+					ptree::read_json(configPath.c_str(), root);
+
+				conf = std::make_shared<ServerConfiguration>(iosrv, root);
+				server->SetConfiguration(conf);
+			}
+			catch (const std::exception &ex)
+			{
+				std::lock_guard<std::recursive_mutex> lock(logMutex);
+				std::cerr << ex.what() << std::endl;
+			}
 		}
 	}
 
