@@ -24,32 +24,108 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 namespace
 {
 
-	class SingleBufferAndVectorSink : public CryptoPP::Bufferless<CryptoPP::Sink>
+	using namespace CryptoPP;
+
+	class MultipleBufferStore : public Store
+	{
+	public:
+		MultipleBufferStore() {}
+		MultipleBufferStore(const_buffer_sequence *buffer, size_t buffer_read_size)
+			:buffer_(buffer), buffer_read_size_(buffer_read_size)
+		{
+			assert(buffer_read_size_ <= buffer_->size_total());
+		}
+
+		bool AnyRetrievable() const { return MaxRetrievable() != 0; }
+		lword MaxRetrievable() const { return buffer_read_size_; }
+
+		size_t TransferTo2(BufferedTransformation &target, lword &transferBytes, const std::string &channel = DEFAULT_CHANNEL, bool blocking = true)
+		{
+			size_t transfer_plan = std::min(transferBytes, buffer_read_size_);
+
+			size_t transfer_last = transfer_plan;
+			size_t blocked_bytes = 0;
+			while (transfer_last > 0)
+			{
+				const_buffer current = buffer_->front();
+				if (transfer_last >= current.size())
+				{
+					blocked_bytes = target.ChannelPut2(channel, (const byte *)current.data(), current.size(), 0, blocking);
+					if (blocked_bytes)
+						break;
+					transfer_last -= current.size();
+					buffer_->pop_front();
+				}
+				else
+				{
+					blocked_bytes = target.ChannelPut2(channel, (const byte *)current.data(), transfer_last, 0, blocking);
+					if (blocked_bytes)
+						break;
+					buffer_->consume_front(transfer_last);
+					transfer_last = 0;
+					break;
+				}
+			}
+
+			size_t transferred_bytes = transfer_plan - transfer_last;
+			buffer_read_size_ -= transferred_bytes;
+			transferBytes = transferred_bytes;
+			return blocked_bytes;
+		}
+		size_t CopyRangeTo2(BufferedTransformation &target, lword &begin, lword end = LWORD_MAX, const std::string &channel = DEFAULT_CHANNEL, bool blocking = true) const
+		{
+			CRYPTOPP_UNUSED(target); CRYPTOPP_UNUSED(begin); CRYPTOPP_UNUSED(end); CRYPTOPP_UNUSED(channel); CRYPTOPP_UNUSED(blocking);
+			throw NotImplemented("MultipleBufferStore: CopyRangeTo2() is not supported by this store");
+		}
+	private:
+		void StoreInitialize(const NameValuePairs &parameters)
+		{
+			if (!parameters.GetValue("InputBuffer", buffer_))
+				throw InvalidArgument("MultipleBufferSource: InputBuffer not specified");
+			if (!parameters.GetValue("InputReadSize", buffer_read_size_))
+				throw InvalidArgument("MultipleBufferSource: InputReadSize not specified");
+		}
+
+		const_buffer_sequence *buffer_ = nullptr;
+		size_t buffer_read_size_ = 0;
+	};
+
+	class MultipleBufferSource : public SourceTemplate<MultipleBufferStore>
+	{
+	public:
+		MultipleBufferSource(const_buffer_sequence &buffer, size_t buffer_read_size, bool pumpAll, BufferedTransformation *attachment = NULLPTR)
+			:SourceTemplate<MultipleBufferStore>(attachment)
+		{
+			SourceInitialize(pumpAll, MakeParameters("InputBuffer", &buffer)("InputReadSize", buffer_read_size));
+		}
+	};
+
+	class SingleBufferAndVectorSink : public Bufferless<Sink>
 	{
 	public:
 		virtual ~SingleBufferAndVectorSink() = default;
 
 		SingleBufferAndVectorSink(mutable_buffer buffer_1, std::vector<char> &buffer_2, size_t &buffer_1_usage)
-			: buffer_1_(buffer_1), buffer_2_(&buffer_2), buffer_1_usage_(&buffer_1_usage)
+			:buffer_1_(buffer_1), buffer_2_(&buffer_2), buffer_1_usage_(&buffer_1_usage)
 		{
 		}
 
-		void IsolatedInitialize(const CryptoPP::NameValuePairs &parameters)
+		void IsolatedInitialize(const NameValuePairs &parameters)
 		{
 			char *buffer_1_data;
 			size_t buffer_1_size;
 			if (!parameters.GetValue("OutputBuffer1Pointer", buffer_1_data))
-				throw CryptoPP::InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Pointer not specified");
+				throw InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Pointer not specified");
 			if (!parameters.GetValue("OutputBuffer1Size", buffer_1_size))
-				throw CryptoPP::InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Size not specified");
+				throw InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Size not specified");
 			if (!parameters.GetValue("OutputBuffer1Usage", buffer_1_usage_))
-				throw CryptoPP::InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Usage not specified");
+				throw InvalidArgument("SingleBufferAndVectorSink: OutputBuffer1Usage not specified");
 			if (!parameters.GetValue("OutputBuffer2Pointer", buffer_2_))
-				throw CryptoPP::InvalidArgument("SingleBufferAndVectorSink: OutputBuffer2Pointer not specified");
+				throw InvalidArgument("SingleBufferAndVectorSink: OutputBuffer2Pointer not specified");
 			buffer_1_ = mutable_buffer(buffer_1_data, buffer_1_size);
 		}
 
-		size_t Put2(const CryptoPP::byte *inString, size_t length, int messageEnd, bool blocking)
+		size_t Put2(const byte *inString, size_t length, int messageEnd, bool blocking)
 		{
 			CRYPTOPP_UNUSED(messageEnd); CRYPTOPP_UNUSED(blocking);
 			if (length == 0)
@@ -78,7 +154,7 @@ namespace
 		size_t *buffer_1_usage_ = nullptr;
 	};
 
-	class MultipleBufferAndVectorSink : public CryptoPP::Bufferless<CryptoPP::Sink>
+	class MultipleBufferAndVectorSink : public Bufferless<Sink>
 	{
 	public:
 		virtual ~MultipleBufferAndVectorSink() = default;
@@ -88,15 +164,15 @@ namespace
 		{
 		}
 
-		void IsolatedInitialize(const CryptoPP::NameValuePairs &parameters)
+		void IsolatedInitialize(const NameValuePairs &parameters)
 		{
 			if (!parameters.GetValue("OutputBuffer1Pointer", buffer_1_))
-				throw CryptoPP::InvalidArgument("MultipleBufferAndVectorSink: OutputBuffer1Pointer not specified");
+				throw InvalidArgument("MultipleBufferAndVectorSink: OutputBuffer1Pointer not specified");
 			if (!parameters.GetValue("OutputBuffer2Pointer", buffer_2_))
-				throw CryptoPP::InvalidArgument("MultipleBufferAndVectorSink: OutputBuffer2Pointer not specified");
+				throw InvalidArgument("MultipleBufferAndVectorSink: OutputBuffer2Pointer not specified");
 		}
 
-		size_t Put2(const CryptoPP::byte *inString, size_t length, int messageEnd, bool blocking)
+		size_t Put2(const byte *inString, size_t length, int messageEnd, bool blocking)
 		{
 			CRYPTOPP_UNUSED(messageEnd); CRYPTOPP_UNUSED(blocking);
 			if (length == 0)
@@ -204,59 +280,39 @@ namespace
 		virtual void set_key(const char *key) override
 		{
 			random_generator::random_bytes(iv_, sizeof(iv_));
-			e_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			e_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 		virtual void set_key_iv(const char *key, const char *iv) override
 		{
 			memcpy(iv_, iv, sizeof(iv_));
-			e_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			e_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 
 		virtual void encrypt(std::vector<char> &dst, const char *src, size_t src_size) override
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::StreamTransformationFilter(
+				new StreamTransformationFilter(
 					e_,
-					new CryptoPP::StringSinkTemplate<std::vector<char>>(dst)
+					new StringSinkTemplate<std::vector<char>>(dst)
 				)
 			);
 		}
 		virtual void encrypt(std::vector<char> &dst, const_buffer_sequence &src, size_t src_size) override
 		{
-			CryptoPP::StreamTransformationFilter encryption(
-				e_,
-				new CryptoPP::StringSinkTemplate<std::vector<char>>(dst)
+			MultipleBufferSource mbs(
+				src, src_size,
+				true,
+				new StreamTransformationFilter(
+					e_,
+					new StringSinkTemplate<std::vector<char>>(dst)
+				)
 			);
-			size_t size_total = 0;
-			while (!src.empty())
-			{
-				const_buffer next = src.front();
-				if (size_total + next.size() <= src_size)
-				{
-					CryptoPP::StringSource next_src((const CryptoPP::byte *)next.data(), next.size(), false);
-					next_src.Attach(new CryptoPP::Redirector(encryption));
-					next_src.Pump();
-					next_src.Detach();
-					src.pop_front();
-				}
-				else
-				{
-					size_t extra_size = src_size - size_total;
-					CryptoPP::StringSource next_src((const CryptoPP::byte *)next.data(), extra_size, false);
-					next_src.Attach(new CryptoPP::Redirector(encryption));
-					next_src.Pump();
-					next_src.Detach();
-					src.consume_front(extra_size);
-					break;
-				}
-			}
-			encryption.MessageEnd();
 		}
 	private:
 		encryptor_type e_;
-		CryptoPP::byte iv_[IV_SIZE];
+		byte iv_[IV_SIZE];
 	};
 
 	template <typename Crypto, size_t KEY_LENGTH, size_t IV_LENGTH>
@@ -272,32 +328,32 @@ namespace
 		virtual void set_key(const char *key) override
 		{
 			random_generator::random_bytes(iv_, sizeof(iv_));
-			d_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			d_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 		virtual void set_key_iv(const char *key, const char *iv) override
 		{
 			memcpy(iv_, iv, sizeof(iv_));
-			d_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			d_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 
 		virtual void decrypt(std::vector<char> &dst, const char *src, size_t src_size) override
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::StreamTransformationFilter(
+				new StreamTransformationFilter(
 					d_,
-					new CryptoPP::StringSinkTemplate<std::vector<char>>(dst)
+					new StringSinkTemplate<std::vector<char>>(dst)
 				)
 			);
 		}
 		virtual size_t decrypt(mutable_buffer dst, std::vector<char> &dst_last, const char *src, size_t src_size)
 		{
 			size_t dst_used = 0;
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::StreamTransformationFilter(
+				new StreamTransformationFilter(
 					d_,
 					new SingleBufferAndVectorSink(dst, dst_last, dst_used)
 				)
@@ -306,10 +362,10 @@ namespace
 		}
 		virtual void decrypt(mutable_buffer_sequence &dst, std::vector<char> &dst_last, const char *src, size_t src_size)
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::StreamTransformationFilter(
+				new StreamTransformationFilter(
 					d_,
 					new MultipleBufferAndVectorSink(dst, dst_last)
 				)
@@ -317,7 +373,7 @@ namespace
 		}
 	private:
 		decryptor_type d_;
-		CryptoPP::byte iv_[IV_SIZE];
+		byte iv_[IV_SIZE];
 	};
 
 	template <typename Crypto, size_t KEY_LENGTH, size_t IV_LENGTH, size_t TAG_LENGTH>
@@ -334,22 +390,22 @@ namespace
 		virtual void set_key(const char *key) override
 		{
 			random_generator::random_bytes(iv_, sizeof(iv_));
-			e_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			e_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 		virtual void set_key_iv(const char *key, const char *iv) override
 		{
 			memcpy(iv_, iv, sizeof(iv_));
-			e_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			e_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 
 		virtual void encrypt(std::vector<char> &dst, const char *src, size_t src_size) override
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::AuthenticatedEncryptionFilter(
+				new AuthenticatedEncryptionFilter(
 					e_,
-					new CryptoPP::StringSinkTemplate<std::vector<char>>(dst),
+					new StringSinkTemplate<std::vector<char>>(dst),
 					false,
 					TAG_SIZE
 				)
@@ -357,9 +413,20 @@ namespace
 		}
 		virtual void encrypt(std::vector<char> &dst, const_buffer_sequence &src, size_t src_size) override
 		{
-			CryptoPP::AuthenticatedEncryptionFilter encryption(
+			MultipleBufferSource mbs(
+				src, src_size,
+				true,
+				new AuthenticatedEncryptionFilter(
+					e_,
+					new StringSinkTemplate<std::vector<char>>(dst),
+					false,
+					TAG_SIZE
+				)
+			);
+			/*
+			AuthenticatedEncryptionFilter encryption(
 				e_,
-				new CryptoPP::StringSinkTemplate<std::vector<char>>(dst),
+				new StringSinkTemplate<std::vector<char>>(dst),
 				false,
 				TAG_SIZE
 			);
@@ -369,8 +436,8 @@ namespace
 				const_buffer next = src.front();
 				if (size_total + next.size() <= src_size)
 				{
-					CryptoPP::StringSource next_src((const CryptoPP::byte *)next.data(), next.size(), false);
-					next_src.Attach(new CryptoPP::Redirector(encryption));
+					StringSource next_src((const byte *)next.data(), next.size(), false);
+					next_src.Attach(new Redirector(encryption));
 					next_src.Pump();
 					next_src.Detach();
 					src.pop_front();
@@ -378,8 +445,8 @@ namespace
 				else
 				{
 					size_t extra_size = src_size - size_total;
-					CryptoPP::StringSource next_src((const CryptoPP::byte *)next.data(), extra_size, false);
-					next_src.Attach(new CryptoPP::Redirector(encryption));
+					StringSource next_src((const byte *)next.data(), extra_size, false);
+					next_src.Attach(new Redirector(encryption));
 					next_src.Pump();
 					next_src.Detach();
 					src.consume_front(extra_size);
@@ -387,10 +454,11 @@ namespace
 				}
 			}
 			encryption.MessageEnd();
+			*/
 		}
 	private:
 		encryptor_type e_;
-		CryptoPP::byte iv_[IV_SIZE];
+		byte iv_[IV_SIZE];
 	};
 
 	template <typename Crypto, size_t KEY_LENGTH, size_t IV_LENGTH, size_t TAG_LENGTH>
@@ -407,23 +475,23 @@ namespace
 		virtual void set_key(const char *key) override
 		{
 			random_generator::random_bytes(iv_, sizeof(iv_));
-			d_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			d_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 		virtual void set_key_iv(const char *key, const char *iv) override
 		{
 			memcpy(iv_, iv, sizeof(iv_));
-			d_.SetKeyWithIV((const CryptoPP::byte *)key, KEY_SIZE, iv_);
+			d_.SetKeyWithIV((const byte *)key, KEY_SIZE, iv_);
 		}
 
 		virtual void decrypt(std::vector<char> &dst, const char *src, size_t src_size) override
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::AuthenticatedDecryptionFilter(
+				new AuthenticatedDecryptionFilter(
 					d_,
-					new CryptoPP::StringSinkTemplate<std::vector<char>>(dst),
-					CryptoPP::AuthenticatedDecryptionFilter::MAC_AT_END | CryptoPP::AuthenticatedDecryptionFilter::THROW_EXCEPTION,
+					new StringSinkTemplate<std::vector<char>>(dst),
+					AuthenticatedDecryptionFilter::MAC_AT_END | AuthenticatedDecryptionFilter::THROW_EXCEPTION,
 					TAG_SIZE
 				)
 			);
@@ -431,13 +499,13 @@ namespace
 		virtual size_t decrypt(mutable_buffer dst, std::vector<char> &dst_last, const char *src, size_t src_size)
 		{
 			size_t dst_used = 0;
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::AuthenticatedDecryptionFilter(
+				new AuthenticatedDecryptionFilter(
 					d_,
 					new SingleBufferAndVectorSink(dst, dst_last, dst_used),
-					CryptoPP::AuthenticatedDecryptionFilter::MAC_AT_END | CryptoPP::AuthenticatedDecryptionFilter::THROW_EXCEPTION,
+					AuthenticatedDecryptionFilter::MAC_AT_END | AuthenticatedDecryptionFilter::THROW_EXCEPTION,
 					TAG_SIZE
 				)
 			);
@@ -445,40 +513,40 @@ namespace
 		}
 		virtual void decrypt(mutable_buffer_sequence &dst, std::vector<char> &dst_last, const char *src, size_t src_size)
 		{
-			CryptoPP::StringSource ss(
-				(const CryptoPP::byte *)src, src_size,
+			StringSource ss(
+				(const byte *)src, src_size,
 				true,
-				new CryptoPP::AuthenticatedDecryptionFilter(
+				new AuthenticatedDecryptionFilter(
 					d_,
 					new MultipleBufferAndVectorSink(dst, dst_last),
-					CryptoPP::AuthenticatedDecryptionFilter::MAC_AT_END | CryptoPP::AuthenticatedDecryptionFilter::THROW_EXCEPTION,
+					AuthenticatedDecryptionFilter::MAC_AT_END | AuthenticatedDecryptionFilter::THROW_EXCEPTION,
 					TAG_SIZE
 				)
 			);
 		}
 	private:
 		decryptor_type d_;
-		CryptoPP::byte iv_[IV_SIZE];
+		byte iv_[IV_SIZE];
 	};
 
 	template <size_t N>
 	void StringToSSKey(char(&dst)[N], const char *src, size_t src_size)
 	{
 		static_assert(N > 0 && N % 16 == 0, "str_to_key doesn't support dst with any size");
-		CryptoPP::Weak::MD5 md5;
+		Weak::MD5 md5;
 
 		size_t i = 0;
 		while (i < N)
 		{
 			if (i == 0)
 			{
-				md5.CalculateDigest((CryptoPP::byte *)dst, (const CryptoPP::byte *)src, src_size);
+				md5.CalculateDigest((byte *)dst, (const byte *)src, src_size);
 			}
 			else
 			{
-				md5.Update((const CryptoPP::byte *)dst + i - md5.DIGESTSIZE, md5.DIGESTSIZE);
-				md5.Update((const CryptoPP::byte *)src, src_size);
-				md5.Final((CryptoPP::byte *)dst + i);
+				md5.Update((const byte *)dst + i - md5.DIGESTSIZE, md5.DIGESTSIZE);
+				md5.Update((const byte *)src, src_size);
+				md5.Final((byte *)dst + i);
 			}
 			i += md5.DIGESTSIZE;
 		}
@@ -538,12 +606,12 @@ namespace
 	{
 		static const std::unordered_map<std::string, std::function<Cryptor()>> factories = {
 			{"none", []()->Cryptor { return Cryptor{ std::make_unique<encryptor_plain>(), std::make_unique<decryptor_plain>() }; }},
-			{"aes-128-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 128, 128>(); }},
-			{"aes-256-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CTR_Mode<CryptoPP::AES>, 256, 128>(); }},
-			{"aes-128-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CFB_Mode<CryptoPP::AES>, 128, 128>(); }},
-			{"aes-256-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CryptoPP::CFB_Mode<CryptoPP::AES>, 256, 128>(); }},
-			{"aes-128-gcm", []()->Cryptor { return CryptoPPAuthCryptoFactory<CryptoPP::GCM<CryptoPP::AES>, 128, 96, 128>(); }},
-			{"chacha20-poly1305", []()->Cryptor { return CryptoPPAuthCryptoFactory<CryptoPP::ChaCha20Poly1305, 256, 96, 128>(); }},
+			{"aes-128-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CTR_Mode<AES>, 128, 128>(); }},
+			{"aes-256-ctr", []()->Cryptor { return CryptoPPCryptoFactory<CTR_Mode<AES>, 256, 128>(); }},
+			{"aes-128-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CFB_Mode<AES>, 128, 128>(); }},
+			{"aes-256-cfb", []()->Cryptor { return CryptoPPCryptoFactory<CFB_Mode<AES>, 256, 128>(); }},
+			{"aes-128-gcm", []()->Cryptor { return CryptoPPAuthCryptoFactory<GCM<AES>, 128, 96, 128>(); }},
+			{"chacha20-poly1305", []()->Cryptor { return CryptoPPAuthCryptoFactory<ChaCha20Poly1305, 256, 96, 128>(); }},
 		};
 		try
 		{
