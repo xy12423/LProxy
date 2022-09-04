@@ -84,6 +84,12 @@ public:
 		std::shared_ptr<ServerConfiguration> conf = configuration_;
 		return conf->NewDownstreamUdpSocket();
 	}
+
+	virtual int ParallelAccept() override
+	{
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		return conf->ParallelAccept();
+	}
 private:
 	asio::io_context &ioCtx_;
 	std::shared_ptr<ServerConfiguration> configuration_;

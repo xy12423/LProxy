@@ -42,16 +42,20 @@ public:
 	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() = 0;
 	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() = 0;
 	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() = 0;
+
+	virtual int ParallelAccept() { return 1; }
 private:
-	void Accept();
-	void InitAcceptor();
-	void InitAcceptorFailed();
+	void StartAccept();
+	void Accept(const std::shared_ptr<prx_listener> &acceptor, uint32_t acceptorID);
+	void InitAcceptor(uint32_t failedAcceptorID);
+	void InitAcceptorFailed(uint32_t failedAcceptorID);
 
 	asio::io_context &ioContext_;
-	std::unique_ptr<prx_listener> acceptor_;
+	std::shared_ptr<prx_listener> acceptor_;
+	uint32_t acceptorID_;
 	endpoint acceptorLocalEp_;
-	boost::asio::steady_timer acceptorRetryTimer_;
 	bool acceptorRetrying_ = false;
+	boost::asio::steady_timer acceptorRetryTimer_;
 	std::unordered_map<ProxySession *, std::weak_ptr<ProxySession>> sessions_;
 	std::recursive_mutex sessionsMutex_, acceptorMutex_;
 

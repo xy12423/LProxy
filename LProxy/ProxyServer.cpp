@@ -37,7 +37,7 @@ ProxyServer::~ProxyServer()
 void ProxyServer::Start()
 {
 	stopping_ = false;
-	Accept();
+	InitAcceptor(acceptorID_);
 }
 
 void ProxyServer::Stop()
@@ -100,22 +100,34 @@ void ProxyServer::PrintSessions()
 			PrintSession(*session);
 }
 
-void ProxyServer::Accept()
+void ProxyServer::StartAccept()
+{
+	std::unique_lock<std::recursive_mutex> lock(acceptorMutex_);
+	std::shared_ptr<prx_listener> acceptor = acceptor_;
+	uint32_t acceptorID = acceptorID_;
+	lock.unlock();
+	for (int i = ParallelAccept(); i > 0; --i)
+	{
+		Accept(acceptor, acceptorID);
+	}
+}
+
+void ProxyServer::Accept(const std::shared_ptr<prx_listener> &acceptor, uint32_t acceptorID)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
 	if (stopping_)
 		return;
 
-	if (!acceptor_)
+	if (!acceptor)
 	{
-		InitAcceptor();
+		InitAcceptor(acceptorID);
 		return;
 	}
-	acceptor_->async_accept([this](error_code err, std::unique_ptr<prx_tcp_socket> &&socketPtr)
+	acceptor->async_accept([this, acceptor, acceptorID](error_code err, std::unique_ptr<prx_tcp_socket> &&socketPtr)
 	{
 		if (err)
 		{
-			InitAcceptor();
+			InitAcceptor(acceptorID);
 			return;
 		}
 
@@ -145,47 +157,50 @@ void ProxyServer::Accept()
 			}
 		});
 
-		Accept();
+		Accept(acceptor, acceptorID);
 	});
 }
 
-void ProxyServer::InitAcceptor()
+void ProxyServer::InitAcceptor(uint32_t failedAcceptorID)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
 	if (stopping_)
 		return;
+	if (failedAcceptorID != acceptorID_) // It's not current acceptor that's failed
+		return;
 
+	uint32_t newAcceptorID = ++acceptorID_;
 	acceptor_ = NewUpstreamAcceptor();
 	acceptorRetrying_ = false;
-	acceptor_->async_open([this](error_code err)
+	acceptor_->async_open([this, newAcceptorID](error_code err)
 	{
 		if (err)
 		{
-			InitAcceptorFailed();
+			InitAcceptorFailed(newAcceptorID);
 			return;
 		}
 		acceptor_->async_bind(acceptorLocalEp_,
-			[this](error_code err)
+			[this, newAcceptorID](error_code err)
 		{
 			if (err)
 			{
-				InitAcceptorFailed();
+				InitAcceptorFailed(newAcceptorID);
 				return;
 			}
-			acceptor_->async_listen([this](error_code err)
+			acceptor_->async_listen([this, newAcceptorID](error_code err)
 			{
 				if (err)
 				{
-					InitAcceptorFailed();
+					InitAcceptorFailed(newAcceptorID);
 					return;
 				}
-				Accept();
+				StartAccept();
 			});
 		});
 	});
 }
 
-void ProxyServer::InitAcceptorFailed()
+void ProxyServer::InitAcceptorFailed(uint32_t failedAcceptorID)
 {
 	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
 	if (stopping_)
@@ -194,17 +209,17 @@ void ProxyServer::InitAcceptorFailed()
 		return;
 	acceptorRetrying_ = true;
 
-	acceptor_->async_close([this](error_code)
+	acceptor_->async_close([this, failedAcceptorID](error_code)
 	{
 		std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
 		if (stopping_)
 			return;
 
 		acceptorRetryTimer_.expires_after(std::chrono::seconds(5));
-		acceptorRetryTimer_.async_wait([this](const boost::system::error_code &ec)
+		acceptorRetryTimer_.async_wait([this, failedAcceptorID](const boost::system::error_code &ec)
 		{
 			if (!ec)
-				InitAcceptor();
+				InitAcceptor(failedAcceptorID);
 		});
 	});
 }

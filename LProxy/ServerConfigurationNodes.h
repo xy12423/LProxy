@@ -314,6 +314,7 @@ class RootNode : public ServerConfigurationNode
 public:
 	RootNode(
 		int thread_count,
+		int parallel_accept,
 		const endpoint &upstream_local_endpoint,
 		ServerConfigurationNode *upstream_listener,
 		ServerConfigurationNode *upstream_udp_socket,
@@ -325,6 +326,7 @@ public:
 	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
 
 	int ThreadCount() const { return thread_count_; }
+	int ParallelAccept() const { return parallel_accept_; }
 	const endpoint &UpstreamLocalEndpoint() const { return upstream_local_endpoint_; }
 
 	ServerConfigurationNode *DownstreamTcpSocketNode() { return downstream_tcp_socket_; }
@@ -340,7 +342,7 @@ public:
 
 	void Validate() const;
 private:
-	int thread_count_;
+	int thread_count_, parallel_accept_;
 	endpoint upstream_local_endpoint_;
 	ServerConfigurationNode *downstream_tcp_socket_, *upstream_udp_socket_, *downstream_udp_socket_, *upstream_listener_, *downstream_listener_;
 };

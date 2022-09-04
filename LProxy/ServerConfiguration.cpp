@@ -271,6 +271,11 @@ int ServerConfiguration::Workers() const
 	return static_cast<RootNode *>(root_node_)->ThreadCount();
 }
 
+int ServerConfiguration::ParallelAccept() const
+{
+	return static_cast<RootNode *>(root_node_)->ParallelAccept();
+}
+
 endpoint ServerConfiguration::UpstreamLocalEndpoint() const
 {
 	return static_cast<RootNode *>(root_node_)->UpstreamLocalEndpoint();
@@ -305,6 +310,7 @@ ServerConfigurationNode *ServerConfiguration::LoadRootNode(const ptree::ptree &a
 {
 	std::unique_ptr<RootNode> node = std::make_unique<RootNode>(
 		args.get<int>("workers", 1),
+		args.get<int>("parallelAccept", 1),
 		StringToEndpointWithResolve(args.get<std::string>("listen"), 1080),
 		LoadListenerNode(args.get_child("upstreamAcceptor")),
 		LoadUdpSocketNode(args.get_child("upstreamUdpSocket")),

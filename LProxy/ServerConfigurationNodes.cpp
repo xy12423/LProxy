@@ -1068,6 +1068,7 @@ std::unique_ptr<prx_listener> ObfsWebsockListenerNode::NewListener()
 
 RootNode::RootNode(
 	int thread_count,
+	int parallel_accept,
 	const endpoint &upstream_local_endpoint,
 	ServerConfigurationNode *upstream_listener,
 	ServerConfigurationNode *upstream_udp_socket,
@@ -1075,7 +1076,7 @@ RootNode::RootNode(
 	ServerConfigurationNode *downstream_udp_socket,
 	ServerConfigurationNode *downstream_listener
 )
-	:thread_count_(thread_count),
+	:thread_count_(thread_count), parallel_accept_(parallel_accept),
 	upstream_local_endpoint_(upstream_local_endpoint),
 	downstream_tcp_socket_(downstream_tcp_socket),
 	upstream_udp_socket_(upstream_udp_socket),
