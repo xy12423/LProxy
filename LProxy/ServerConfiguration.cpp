@@ -120,49 +120,6 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 					);
 			}
 		},
-		{"ss", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSTcpSocketNode>(
-					LoadTcpSocketNode(args.get_child("parent")),
-					StringToEndpoint(args.get<std::string>("server"), 1080)
-					);
-			}
-		},
-		{"ss_crypto", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSCryptoTcpSocketNode>(
-					LoadTcpSocketNode(args.get_child("parent")),
-					args.get<std::string>("method"),
-					args.get<std::string>("password")
-					);
-			}
-		},
-		{"ssr_auth_aes128_sha1", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSRAuthAes128Sha1TcpSocketNode>(
-					LoadTcpSocketNode(args.get_child("parent")),
-					args.get<std::string>("param")
-					);
-			}
-		},
-		{"ssr_http_simple", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSRHttpSimpleTcpSocketNode>(
-					LoadTcpSocketNode(args.get_child("parent")),
-					args.get<std::string>("param")
-					);
-			}
-		},
-		{"vmess", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<VMessTcpSocketNode>(
-					LoadTcpSocketNode(args.get_child("parent")),
-					StringToEndpoint(args.get<std::string>("server"), 10086),
-					args.get<std::string>("uid"),
-					args.get<std::string>("security")
-					);
-			}
-		},
 		{"weight_switch", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
 			{
 				WeightBasedSwitchTcpSocketNode::Container parents;
@@ -199,36 +156,13 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 		},
 		{"socks5", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
 			{
-				if (args.count("parent") == 0)
-					return std::make_unique<Socks5UdpSocketNode>(
-						LoadTcpSocketNode(args.get_child("parent_tcp")),
-						StringToEndpoint(args.get<std::string>("server"), 1080)
-						);
-				else
-					return std::make_unique<Socks5UdpSocketNode>(
-						LoadTcpSocketNode(args.get_child("parent_tcp")),
-						LoadUdpSocketNode(args.get_child("parent")),
-						StringToEndpoint(args.get<std::string>("server"), 1080)
-						);
-			}
-		},
-		{"ss", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSUdpSocketNode>(
+				return std::make_unique<Socks5UdpSocketNode>(
+					LoadTcpSocketNode(args.get_child("parent_tcp")),
 					LoadUdpSocketNode(args.get_child("parent")),
 					StringToEndpoint(args.get<std::string>("server"), 1080)
 					);
 			}
 		},
-		{"ss_crypto", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
-			{
-				return std::make_unique<SSCryptoUdpSocketNode>(
-					LoadUdpSocketNode(args.get_child("parent")),
-					args.get<std::string>("method"),
-					args.get<std::string>("password")
-					);
-			}
-		}
 	},
 	listener_node_factories_{
 		{"ref", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>

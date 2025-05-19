@@ -133,25 +133,25 @@ void ProxyServer::Accept(const std::shared_ptr<prx_listener> &acceptor, uint32_t
 
 		prx_tcp_socket &socket = *socketPtr;
 		std::shared_ptr<std::unique_ptr<prx_tcp_socket>> sharedSocketPtr = std::make_shared<std::unique_ptr<prx_tcp_socket>>(std::move(socketPtr));
-		std::shared_ptr<char> firstByte = std::make_shared<char>();
-		socket.async_read(mutable_buffer(&*firstByte, 1),
-			[this, sharedSocketPtr = std::move(sharedSocketPtr), firstByte](error_code err)
+		socket.async_recv([this, sharedSocketPtr = std::move(sharedSocketPtr)](error_code err, const_buffer data, buffer_data_store_holder &&dataHolder)
 		{
 			if (err)
 				return;
+			if (data.size() < 1)
+				return;
 
-			switch (*firstByte)
+			switch (data.data()[0])
 			{
-			case 4:
+			case byte{ 4 }:
 			{
 				auto session = std::make_shared<Socks4Session>(*this, std::move(*sharedSocketPtr));
-				session->Start(*firstByte);
+				session->Start(buffer_with_data_store{ data, std::move(dataHolder) });
 				break;
 			}
-			case 5:
+			case byte{ 5 }:
 			{
 				auto session = std::make_shared<Socks5Session>(*this, std::move(*sharedSocketPtr));
-				session->Start(*firstByte);
+				session->Start(buffer_with_data_store{ data, std::move(dataHolder) });
 				break;
 			}
 			}

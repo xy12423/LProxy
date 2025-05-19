@@ -26,25 +26,22 @@ class Socks5Session : public ProxySession
 {
 	static constexpr size_t kBufSize = 0x2000;
 
-	static constexpr uint8_t kSocksVersion = 5;
+	static constexpr byte kSocksVersion{ 5 };
 	enum
 	{
 		CONNECT = 1,
 		BIND = 2,
 		UDP_ASSOCIATE = 3,
-		UDP_ASSOCIATE_OVER_TCP = 4,
 	};
 public:
 	Socks5Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket);
 	virtual ~Socks5Session();
 
 	virtual void Start() override;
-	virtual void Start(char firstByte) override;
+	virtual void Start(buffer_with_data_store &&leftover) override;
 	virtual void Stop() override;
 private:
 	void ReceiveHeader();
-	void ReceiveHeaderWithFirstByte(char firstByte);
-	void ReceiveMethodRequested();
 	void SendMethodSelected();
 
 	void ReceiveRequest();
@@ -60,18 +57,17 @@ private:
 	void EndWithError(error_code errCode);
 
 	void SendSocks5(uint8_t type, const endpoint &ep, null_callback &&complete_handler);
-	void ReceiveSocks5(socksreq_callback &&complete_handler);
-	void ReceiveSocks5Body(const std::shared_ptr<socksreq_callback> &callback);
+	void ReceiveSocks5(socks5::socksreq_callback &&complete_handler);
 
+	void RelayUpLeftover();
 	void RelayUp();
 	void RelayDown();
 	void ReadUpWhileAccept();
 	void ReadUpKeepalive();
-	void RelayUpUdpOverTcp();
-	void RelayUpUdp();
-	void RelayDownUdp();
+	void RelayUpUdp(const std::shared_ptr<std::array<byte, kBufSize>> &upBuf);
+	void RelayDownUdp(const std::shared_ptr<std::array<byte, kBufSize>> &downBuf);
 
-	static error_code ParseUdp(const char *recv, size_t recvSize, endpoint &ep, const char *&dataStartAt, size_t &dataSize);
+	static error_code ParseUdp(const byte *recv, size_t recvSize, endpoint &ep, const byte *&dataStartAt, size_t &dataSize);
 
 	static uint8_t SelectMethod(int argc, const uint8_t* argv);
 	bool IsAdvancedProtocol();
@@ -84,9 +80,8 @@ private:
 	std::unique_ptr<prx_udp_socket> upUdp_, downUdp_;
 	endpoint upUdpRemoteEp_, upUdpFrom_, downUdpFrom_;
 
-	std::unique_ptr<char[]> upBuf_, downBuf_, udpOverTcpBuf_;
+	buffer_with_data_store upLeftOver_;
 	char udpKeepAliveBuf_;
-	bool udpOverTcp_ = false;
 
 	std::atomic_bool replySent_{ false }, stopping_{ false };
 };

@@ -63,46 +63,6 @@ void NameResolvingVisitor::Visit(ObfsWebsockTcpSocketNode &node)
 	return_value_ = nullptr;
 }
 
-void NameResolvingVisitor::Visit(SSTcpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(SSCryptoTcpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(SSRAuthAes128Sha1TcpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(SSRHttpSimpleTcpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(VMessTcpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
 void NameResolvingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
 	for (auto itr = node.Begin(), itr_end = node.End(); itr != itr_end; ++itr)
@@ -130,22 +90,6 @@ void NameResolvingVisitor::Visit(Socks5UdpSocketNode &node)
 		if (return_value_ != nullptr)
 			node.SetUdpBaseNode(return_value_);
 	}
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(SSUdpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
-	return_value_ = nullptr;
-}
-
-void NameResolvingVisitor::Visit(SSCryptoUdpSocketNode &node)
-{
-	node.BaseNode()->AcceptVisitor(*this);
-	if (return_value_ != nullptr)
-		node.SetBaseNode(return_value_);
 	return_value_ = nullptr;
 }
 
@@ -216,36 +160,6 @@ void ValidatingVisitor::Visit(ObfsWebsockTcpSocketNode &node)
 	node.BaseNode()->AcceptVisitor(*this);
 }
 
-void ValidatingVisitor::Visit(SSTcpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(SSCryptoTcpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(SSRAuthAes128Sha1TcpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(SSRHttpSimpleTcpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(VMessTcpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
 void ValidatingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
 	node.Validate();
@@ -263,18 +177,6 @@ void ValidatingVisitor::Visit(Socks5UdpSocketNode &node)
 	node.BaseNode()->AcceptVisitor(*this);
 	if (node.UdpBaseNode() != nullptr)
 		node.UdpBaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(SSUdpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
-}
-
-void ValidatingVisitor::Visit(SSCryptoUdpSocketNode &node)
-{
-	node.Validate();
-	node.BaseNode()->AcceptVisitor(*this);
 }
 
 void ValidatingVisitor::Visit(RawListenerNode &node)

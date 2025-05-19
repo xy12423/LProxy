@@ -30,7 +30,7 @@ public:
 	virtual ~ProxySession();
 
 	virtual void Start() = 0;
-	virtual void Start(char firstByte) = 0;
+	virtual void Start(buffer_with_data_store &&leftover) = 0;
 	virtual void Stop() = 0;
 
 	const endpoint &UpstreamEndpoint() const { return upEp_; }

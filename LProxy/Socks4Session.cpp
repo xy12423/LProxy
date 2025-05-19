@@ -24,8 +24,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 static endpoint kEpZero((uint32_t)0, 0);
 
 Socks4Session::Socks4Session(ProxyServer &server, std::unique_ptr<prx_tcp_socket> &&socket)
-	:ProxySession(server), upTcp_(std::move(socket)),
-	upBuf_(std::make_unique<char[]>(kBufSize)), downBuf_(std::make_unique<char[]>(kBufSize))
+	:ProxySession(server), upTcp_(std::move(socket))
 {
 	error_code err;
 	upTcp_->remote_endpoint(AccessUpstreamEndpoint(), err);
@@ -48,12 +47,12 @@ void Socks4Session::Start()
 	ReceiveRequest();
 }
 
-void Socks4Session::Start(char firstByte)
+void Socks4Session::Start(buffer_with_data_store &&leftover)
 {
 	auto self = shared_from_this();
 	server_.BeginSession(this, std::weak_ptr<ProxySession>(self));
 
-	upBuf_[upBufPEnd_++] = firstByte;
+	upLeftOver_ = std::move(leftover);
 	ReceiveRequest();
 }
 
@@ -70,115 +69,125 @@ void Socks4Session::Stop()
 		downTcp_->close(ec);
 }
 
+namespace
+{
+	struct RecvSocks4State
+	{
+		static constexpr size_t respSizeMax = 256;
+
+		byte respHead[respSizeMax];
+		size_t respSizeRead = 0;
+
+		size_t userNameEnd = respSizeMax, domainEnd = respSizeMax;
+
+		bool isSocks4a() const { return respHead[4] == byte{ 0 } && respHead[5] == byte{ 0 } && respHead[6] == byte{ 0 } && respHead[7] != byte{ 0 }; }
+	};
+
+	bool parse_s4(RecvSocks4State &state, const_buffer &recv_buffer)
+	{
+		constexpr size_t respSizeMin = 8;
+		if (state.respSizeRead < respSizeMin)
+		{
+			state.respSizeRead += const_buffer::consume(state.respHead + state.respSizeRead, respSizeMin - state.respSizeRead, recv_buffer);
+			if (state.respSizeRead < respSizeMin)
+				return false;
+		}
+
+		if (state.userNameEnd == RecvSocks4State::respSizeMax)
+		{
+			size_t sizeToConsume = 0;
+			for (; sizeToConsume < recv_buffer.size(); ++sizeToConsume)
+			{
+				if (recv_buffer.data()[sizeToConsume] == byte{ 0 })
+				{
+					sizeToConsume += 1;
+					break;
+				}
+			}
+			if (state.respSizeRead + sizeToConsume > RecvSocks4State::respSizeMax)
+				throw std::invalid_argument("Header too long");
+			state.respSizeRead += const_buffer::consume(state.respHead + state.respSizeRead, sizeToConsume, recv_buffer);
+			if (state.respHead[state.respSizeRead - 1] == byte{ 0 })
+				state.userNameEnd = state.respSizeRead;
+			else
+				return false;
+		}
+
+		if (state.isSocks4a() && state.domainEnd == RecvSocks4State::respSizeMax)
+		{
+			size_t sizeToConsume = 0;
+			for (; sizeToConsume < recv_buffer.size(); ++sizeToConsume)
+			{
+				if (recv_buffer.data()[sizeToConsume] == byte{ 0 })
+				{
+					sizeToConsume += 1;
+					break;
+				}
+			}
+			if (state.respSizeRead + sizeToConsume > RecvSocks4State::respSizeMax)
+				throw std::invalid_argument("Header too long");
+			state.respSizeRead += const_buffer::consume(state.respHead + state.respSizeRead, sizeToConsume, recv_buffer);
+			if (state.respHead[state.respSizeRead - 1] == byte{ 0 })
+				state.domainEnd = state.respSizeRead;
+			else
+				return false;
+		}
+
+		return true;
+	}
+}
+
 void Socks4Session::ReceiveRequest()
 {
-	assert(upBufP_ <= upBufPEnd_);
-	if (upBufP_ + kFixedHeaderSize > upBufPEnd_)
+	std::shared_ptr<RecvSocks4State> state_callback = std::make_shared<RecvSocks4State>();
+	upTcp_->async_recv_until(std::move(upLeftOver_), [this, state_callback](const_buffer &buffer_recv)
 	{
-		auto self = shared_from_this();
-		ReceiveMore([this, self = std::move(self)](error_code err)
+		try
 		{
-			if (err)
-			{
-				Stop();
-				return;
-			}
-			ReceiveRequest();
-		});
-		return;
-	}
-
-	if (upBuf_[0] != kSocksVersion)
-	{
-		Stop();
-		return;
-	}
-	upBufP_ += kFixedHeaderSize;
-	ReceiveUsername(upBufP_);
-}
-
-void Socks4Session::ReceiveUsername(size_t upBufPBegin)
-{
-	if (upBufP_ >= upBufPEnd_)
-	{
-		assert(upBufP_ == upBufPEnd_);
-		auto self = shared_from_this();
-		ReceiveMore([this, self = std::move(self), upBufPBegin](error_code err)
+			bool header_parsed = parse_s4(*state_callback, buffer_recv);
+			return error_code_or_op_result{ header_parsed ? OPRESULT_COMPLETED : OPRESULT_CONTINUE };
+		}
+		catch (const std::exception &)
 		{
-			if (err)
-			{
-				Stop();
-				return;
-			}
-			ReceiveUsername(upBufPBegin);
-		});
-		return;
-	}
-
-	while (upBufP_ < upBufPEnd_)
+			return error_code_or_op_result{ OPRESULT_ERROR };
+		}
+	}, [this, state_callback](error_code_or_op_result ec_or_result, buffer_with_data_store &&leftover)
 	{
-		if (upBuf_[upBufP_] == 0)
+		if (ec_or_result.code == OPRESULT_ERROR) [[unlikely]]
 		{
-			username_.assign(upBuf_.get() + upBufPBegin, upBufP_ - upBufPBegin);
-			++upBufP_;
-
-			if (upBuf_[4] == 0 && upBuf_[5] == 0 && upBuf_[6] == 0 && upBuf_[7] != 0)
-			{
-				AccessSessionType() = "Socks4a";
-				ReceiveDomain(upBufP_);
-			}
-			else
-			{
-				DoRequest((uint8_t)upBuf_[1], endpoint(address_v4(upBuf_.get() + 4), ((uint8_t)upBuf_[2] << 8) | ((uint8_t)upBuf_[3])));
-			}
-
+			Stop();
 			return;
 		}
-		++upBufP_;
-	}
-
-	if (upBufPEnd_ < kBufSize)
-		ReceiveUsername(upBufPBegin);
-	else
-		Stop();
-}
-
-void Socks4Session::ReceiveDomain(size_t upBufPBegin)
-{
-	if (upBufP_ >= upBufPEnd_)
-	{
-		assert(upBufP_ == upBufPEnd_);
-		auto self = shared_from_this();
-		ReceiveMore([this, self = std::move(self), upBufPBegin](error_code err)
+		if (ec_or_result.code != OPRESULT_COMPLETED) [[unlikely]]
 		{
-			if (err)
-			{
-				Stop();
-				return;
-			}
-			ReceiveDomain(upBufPBegin);
-		});
-		return;
-	}
-
-	while (upBufP_ < upBufPEnd_)
-	{
-		if (upBuf_[upBufP_] == 0)
-		{
-			std::string domain(upBuf_.get() + upBufPBegin, upBufP_ - upBufPBegin);
-			++upBufP_;
-
-			DoRequest((uint8_t)upBuf_[1], endpoint(std::move(domain), ((uint8_t)upBuf_[2] << 8) | ((uint8_t)upBuf_[3])));
-
+			Stop();
 			return;
 		}
-		++upBufP_;
-	}
+		upLeftOver_ = std::move(leftover);
+		RecvSocks4State &state = *state_callback;
 
-	if (upBufPEnd_ < kBufSize)
-		ReceiveDomain(upBufPBegin);
-	else
-		Stop();
+		if (state.isSocks4a())
+		{
+			AccessSessionType() = "Socks4a";
+			DoRequest(
+				std::to_integer<uint8_t>(state.respHead[1]),
+				endpoint(
+					std::string(reinterpret_cast<const char *>(state.respHead + state.userNameEnd), state.domainEnd - state.userNameEnd),
+					(std::to_integer<uint8_t>(state.respHead[2]) << 8u) | std::to_integer<uint8_t>(state.respHead[3])
+				)
+			);
+		}
+		else
+		{
+			DoRequest(
+				std::to_integer<uint8_t>(state.respHead[1]),
+				endpoint(
+					address_v4(state.respHead + 4),
+					(std::to_integer<uint8_t>(state.respHead[2]) << 8u) | std::to_integer<uint8_t>(state.respHead[3])
+				)
+			);
+		}
+	});
 }
 
 void Socks4Session::DoRequest(uint8_t cmd, const endpoint &ep)
@@ -241,7 +250,7 @@ void Socks4Session::EndConnect()
 			Stop();
 			return;
 		}
-		RelayUpBuf();
+		RelayUpLeftover();
 		RelayDown();
 	});
 }
@@ -337,53 +346,30 @@ void Socks4Session::EndWithError()
 	});
 }
 
-void Socks4Session::ReceiveMore(null_callback &&complete_handler)
-{
-	if (upBufPEnd_ >= kBufSize)
-	{
-		assert(upBufPEnd_ == kBufSize);
-		complete_handler(ERR_OPERATION_FAILURE);
-		return;
-	}
-	std::shared_ptr<null_callback> callback = std::make_shared<null_callback>(std::move(complete_handler));
-	upTcp_->async_recv(mutable_buffer(upBuf_.get() + upBufPEnd_, kBufSize - upBufPEnd_),
-		[this, callback = std::move(callback)](error_code err, size_t transferred)
-	{
-		if (err)
-		{
-			Stop();
-			(*callback)(err);
-			return;
-		}
-		upBufPEnd_ += transferred;
-		(*callback)(err);
-	});
-}
-
 void Socks4Session::SendResponse(uint8_t err, const endpoint &ep, null_callback &&complete_handler)
 {
 	std::shared_ptr<null_callback> callback = std::make_shared<null_callback>(std::move(complete_handler));
 	try
 	{
-		std::shared_ptr<std::string> buf = std::make_shared<std::string>();
-		buf->push_back(kReplyVersion);  //VER
-		buf->push_back(err);            //REP
-		buf->push_back(ep.port() >> 8);	//DSTPORT
-		buf->push_back(ep.port() & 0xFF);
+		PRXSOCKET_MAKE_INPLACE_BUFFER(std::vector<byte>, resp, respHolder);
+		resp.push_back(byte{ kReplyVersion });  //VER
+		resp.push_back(byte{ err });            //REP
+		resp.insert(resp.end(), { byte{ static_cast<unsigned char>(ep.port() >> 8) }, byte{ static_cast<unsigned char>(ep.port() & 0xFF) } });	//DSTPORT
 		if (ep.addr().type() != address::V4)
-			throw(socks5_error(ERR_BAD_ARG_LOCAL));
-		buf->append(ep.addr().v4().data(), address_v4::ADDR_SIZE);  //DSTADDR
+			throw(socks5::socks5_error(ERR_BAD_ARG_LOCAL));
+		const byte *addr_data = ep.addr().v4().data();
+		resp.insert(resp.end(), addr_data, addr_data + address_v4::ADDR_SIZE);  //DSTADDR
 
-		upTcp_->async_write(const_buffer(*buf),
-			[this, buf, callback](error_code err)
+		upTcp_->async_send(const_buffer(resp), std::move(respHolder),
+			[this, callback](error_code err)
 		{
 			try
 			{
 				if (err)
-					throw(socks5_error(err));
+					throw(socks5::socks5_error(err));
 				(*callback)(err);
 			}
-			catch (socks5_error& ex)
+			catch (socks5::socks5_error& ex)
 			{
 				Stop();
 				(*callback)(ex.get_err());
@@ -402,25 +388,24 @@ void Socks4Session::SendResponse(uint8_t err, const endpoint &ep, null_callback 
 	}
 }
 
-void Socks4Session::RelayUpBuf()
+void Socks4Session::RelayUpLeftover()
 {
-	if (upBufP_ >= upBufPEnd_)
+	size_t transferred = upLeftOver_.buffer.size();
+	if (transferred == 0)
 	{
-		assert(upBufP_ == upBufPEnd_);
 		RelayUp();
 		return;
 	}
 	auto self = shared_from_this();
-	downTcp_->async_write(const_buffer(upBuf_.get() + upBufP_, upBufPEnd_ - upBufP_),
-		[this, self = std::move(self)](error_code err)
+	downTcp_->async_send(upLeftOver_.buffer, std::move(upLeftOver_.holder),
+		[this, self, transferred](error_code err)
 	{
 		if (err)
 		{
 			upTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
 			return;
 		}
-		AddBytesDown(upBufPEnd_ - upBufP_);
-		upBufP_ = upBufPEnd_ = 0;
+		AddBytesDown(transferred);
 		RelayUp();
 	});
 }
@@ -428,15 +413,15 @@ void Socks4Session::RelayUpBuf()
 void Socks4Session::RelayUp()
 {
 	auto self = shared_from_this();
-	upTcp_->async_recv(mutable_buffer(upBuf_.get(), kBufSize),
-		[this, self = std::move(self)](error_code err, size_t transferred)
+	upTcp_->async_recv([this, self = std::move(self)](error_code err, const_buffer data, buffer_data_store_holder &&dataHolder)
 	{
 		if (err)
 		{
 			downTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
-		downTcp_->async_write(const_buffer(upBuf_.get(), transferred),
+		size_t transferred = data.size();
+		downTcp_->async_send(data, std::move(dataHolder),
 			[this, self, transferred](error_code err)
 		{
 			if (err)
@@ -453,15 +438,15 @@ void Socks4Session::RelayUp()
 void Socks4Session::RelayDown()
 {
 	auto self = shared_from_this();
-	downTcp_->async_recv(mutable_buffer(downBuf_.get(), kBufSize),
-		[this, self = std::move(self)](error_code err, size_t transferred)
+	downTcp_->async_recv([this, self = std::move(self)](error_code err, const_buffer data, buffer_data_store_holder &&dataHolder)
 	{
 		if (err)
 		{
 			upTcp_->async_shutdown(prx_tcp_socket::shutdown_send, [this, self](error_code) {});
 			return;
 		}
-		upTcp_->async_write(const_buffer(downBuf_.get(), transferred),
+		size_t transferred = data.size();
+		upTcp_->async_send(data, std::move(dataHolder),
 			[this, self, transferred](error_code err)
 		{
 			if (err)
@@ -477,24 +462,29 @@ void Socks4Session::RelayDown()
 
 void Socks4Session::ReadUpWhileAccept()
 {
+	// TODO: We should probably buffer the data, instead of discarding them?
 	auto self = shared_from_this();
-	upTcp_->async_recv(mutable_buffer(upBuf_.get() + upBufPEnd_, std::min((size_t)1, kBufSize - upBufPEnd_)),
-		[this, self = std::move(self)](error_code err, size_t transferred)
+	upTcp_->async_recv([this, self = std::move(self)](error_code err, const_buffer data, buffer_data_store_holder &&dataHolder)
 	{
 		if (err)
 		{
 			Stop();
 			return;
 		}
-		upBufPEnd_ += transferred;
 		if (downTcp_)
 		{
-			RelayUpBuf();
-			return;
-		}
-		if (upBufPEnd_ >= kBufSize)
-		{
-			Stop();
+			size_t transferred = data.size();
+			downTcp_->async_send(data, std::move(dataHolder),
+				[this, self, transferred](error_code err)
+			{
+				if (err)
+				{
+					upTcp_->async_shutdown(prx_tcp_socket::shutdown_receive, [this, self](error_code) {});
+					return;
+				}
+				AddBytesDown(transferred);
+				RelayUp();
+			});
 			return;
 		}
 		ReadUpWhileAccept();

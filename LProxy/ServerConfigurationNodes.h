@@ -102,67 +102,7 @@ public:
 	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
 	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
 private:
-	std::string key_;
-};
-
-class SSTcpSocketNode : public LayeredTcpSocketNode
-{
-public:
-	SSTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint);
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
-private:
-	endpoint server_endpoint_;
-};
-
-class SSCryptoTcpSocketNode : public LayeredTcpSocketNode
-{
-public:
-	SSCryptoTcpSocketNode(ServerConfigurationNode *base, const std::string &method, const std::string &password);
-
-	std::unique_ptr<ss::ss_crypto_tcp_socket> NewSSCryptoTcpSocket();
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
-private:
-	std::string method_;
-	std::vector<char> key_;
-};
-
-class SSRAuthAes128Sha1TcpSocketNode : public LayeredNodeTemplate<TcpSocketNode, SSCryptoTcpSocketNode>
-{
-public:
-	SSRAuthAes128Sha1TcpSocketNode(ServerConfigurationNode *base, const std::string &param);
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
-private:
-	std::string param_;
-};
-
-class SSRHttpSimpleTcpSocketNode : public LayeredTcpSocketNode
-{
-public:
-	SSRHttpSimpleTcpSocketNode(ServerConfigurationNode *base, const std::string &param);
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
-private:
-	std::string param_;
-};
-
-class VMessTcpSocketNode : public LayeredTcpSocketNode
-{
-public:
-	VMessTcpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint, const std::string &uid_uuid, const std::string &security);
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_tcp_socket> NewTcpSocket() override;
-private:
-	endpoint server_endpoint_;
-	uint8_t uid_[16], security_;
-	std::string security_str_;
+	std::vector<byte> key_;
 };
 
 class WeightBasedSwitchTcpSocketNode : public TcpSocketNode
@@ -243,31 +183,6 @@ private:
 	endpoint server_endpoint_;
 };
 
-class SSUdpSocketNode : public LayeredUdpSocketNode
-{
-public:
-	SSUdpSocketNode(ServerConfigurationNode *base, const endpoint &server_endpoint);
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_udp_socket> NewUdpSocket() override { return std::make_unique<ss::ss_udp_socket>(Base().NewUdpSocket(), server_endpoint_); }
-private:
-	endpoint server_endpoint_;
-};
-
-class SSCryptoUdpSocketNode : public LayeredUdpSocketNode
-{
-public:
-	SSCryptoUdpSocketNode(ServerConfigurationNode *base, const std::string &method, const std::string &password);
-
-	std::unique_ptr<ss::ss_crypto_udp_socket> NewSSCryptoUdpSocket();
-
-	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
-	virtual std::unique_ptr<prx_udp_socket> NewUdpSocket() override;
-private:
-	std::string method_;
-	std::vector<char> key_;
-};
-
 class ListenerNode : public ServerConfigurationNode
 {
 public:
@@ -306,7 +221,7 @@ public:
 	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
 	virtual std::unique_ptr<prx_listener> NewListener() override;
 private:
-	std::string key_;
+	std::vector<byte> key_;
 };
 
 class RootNode : public ServerConfigurationNode
