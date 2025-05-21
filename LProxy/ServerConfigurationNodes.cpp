@@ -136,7 +136,7 @@ ObfsWebsockTcpSocketNode::ObfsWebsockTcpSocketNode(ServerConfigurationNode *base
 {
 	evp::message_digest<md_sha256> hasher;
 	byte key_real[32];
-	size_t key_real_size;
+	size_t key_real_size = sizeof(key_real);
 	hasher.calculate_digest(key_real, key_real_size, (byte *)password.data(), password.size());
 	if (key_real_size != sizeof(key_real))
 		throw std::invalid_argument("Hash size mismatch");
@@ -311,7 +311,7 @@ ObfsWebsockListenerNode::ObfsWebsockListenerNode(ServerConfigurationNode *base, 
 {
 	evp::message_digest<md_sha256> hasher;
 	byte key_real[32];
-	size_t key_real_size;
+	size_t key_real_size = sizeof(key_real);
 	hasher.calculate_digest(key_real, key_real_size, (byte *)password.data(), password.size());
 	if (key_real_size != sizeof(key_real))
 		throw std::invalid_argument("Hash size mismatch");
