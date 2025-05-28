@@ -19,13 +19,14 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
+class ProxyService;
 class ProxySession;
 
 class ProxyServer
 {
 	//Service management
 public:
-	ProxyServer(asio::io_context &ioContext, const endpoint &acceptorLocalEp);
+	ProxyServer(asio::io_context &ioContext);
 	virtual ~ProxyServer();
 
 	void Start();
@@ -42,22 +43,15 @@ public:
 	virtual std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket() = 0;
 	virtual std::unique_ptr<prx_listener> NewDownstreamAcceptor() = 0;
 	virtual std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket() = 0;
+	virtual std::vector<std::shared_ptr<ProxyService>> ConstructAllServices() = 0;
 
 	virtual int ParallelAccept() { return 1; }
-private:
-	void StartAccept();
-	void Accept(const std::shared_ptr<prx_listener> &acceptor, uint32_t acceptorID);
-	void InitAcceptor(uint32_t failedAcceptorID);
-	void InitAcceptorFailed(uint32_t failedAcceptorID);
-
+protected:
 	asio::io_context &ioContext_;
-	std::shared_ptr<prx_listener> acceptor_;
-	uint32_t acceptorID_;
-	endpoint acceptorLocalEp_;
-	bool acceptorRetrying_ = false;
-	boost::asio::steady_timer acceptorRetryTimer_;
+private:
+	std::vector<std::shared_ptr<ProxyService>> services_;
 	std::unordered_map<ProxySession *, std::weak_ptr<ProxySession>> sessions_;
-	std::recursive_mutex sessionsMutex_, acceptorMutex_;
+	std::recursive_mutex serverMutex_;
 
 	std::atomic_bool stopping_{ false };
 };

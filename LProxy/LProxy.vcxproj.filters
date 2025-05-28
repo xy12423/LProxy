@@ -39,10 +39,19 @@
     <ClInclude Include="ServerConfigurationNode.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="ServerConfigurationVisitor.h">
+    <ClInclude Include="ServerConfigurationVisitors.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="ServerConfigurationNodes.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ProxyService.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="SocksService.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="PortForwardService.h">
       <Filter>头文件</Filter>
     </ClInclude>
   </ItemGroup>
@@ -71,10 +80,19 @@
     <ClCompile Include="ServerConfiguration.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="ServerConfigurationVisitor.cpp">
+    <ClCompile Include="ServerConfigurationVisitors.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="ServerConfigurationNodes.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ProxyService.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="SocksService.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="PortForwardService.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

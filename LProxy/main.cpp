@@ -19,8 +19,10 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #include "pch.h"
 #include "ProxyServer.h"
+#include "SocksService.h"
 #include "AcceptorManager.h"
 #include "ServerConfiguration.h"
+#include "ServerConfigurationNodes.h"
 
 extern std::recursive_mutex logMutex;
 
@@ -53,7 +55,7 @@ public:
 	ConfigurableServer(
 		asio::io_context &ioCtx,
 		const std::shared_ptr<ServerConfiguration> &conf)
-		:ProxyServer(ioCtx, conf->UpstreamLocalEndpoint()), ioCtx_(ioCtx), configuration_(conf)
+		:ProxyServer(ioCtx), configuration_(conf)
 	{
 	}
 
@@ -84,6 +86,41 @@ public:
 		std::shared_ptr<ServerConfiguration> conf = configuration_;
 		return conf->NewDownstreamUdpSocket();
 	}
+	virtual std::vector<std::shared_ptr<ProxyService>> ConstructAllServices() override
+	{
+		std::vector<std::shared_ptr<ProxyService>> results;
+		struct Visitor : public ServerConfigurationVisitor
+		{
+			Visitor(ConfigurableServer *self, std::vector<std::shared_ptr<ProxyService>> &results) :self_(self), results_(results) {}
+
+			virtual void Visit(ObjectReferenceNode &node) override {}
+
+			virtual void Visit(RawTcpSocketNode &node) override {}
+			virtual void Visit(HttpTcpSocketNode &node) override {}
+			virtual void Visit(Socks5TcpSocketNode &node) override {}
+			virtual void Visit(ObfsWebsockTcpSocketNode &node) override {}
+			virtual void Visit(WeightBasedSwitchTcpSocketNode &node) override {}
+
+			virtual void Visit(RawUdpSocketNode &node) override {}
+			virtual void Visit(Socks5UdpSocketNode &node) override {}
+
+			virtual void Visit(RawListenerNode &node) override {}
+			virtual void Visit(Socks5ListenerNode &node) override {}
+			virtual void Visit(ObfsWebsockListenerNode &node) override {}
+
+			virtual void Visit(SocksServiceNode &node) override { results_.emplace_back(std::make_shared<SocksService>(*self_, self_->ioContext_, node.UpstreamEndpoint())); }
+			virtual void Visit(PortForwardingServiceNode &node) override {}
+
+			virtual void Visit(ServiceListNode &node) override {}
+			virtual void Visit(RootNode &node) override {}
+
+			ConfigurableServer *self_;
+			std::vector<std::shared_ptr<ProxyService>> &results_;
+		} visitor(this, results);
+		std::shared_ptr<ServerConfiguration> conf = configuration_;
+		conf->VisitAllServices(visitor);
+		return results;
+	}
 
 	virtual int ParallelAccept() override
 	{
@@ -91,7 +128,6 @@ public:
 		return conf->ParallelAccept();
 	}
 private:
-	asio::io_context &ioCtx_;
 	std::shared_ptr<ServerConfiguration> configuration_;
 };
 

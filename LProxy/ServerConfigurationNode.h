@@ -19,7 +19,51 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-class ServerConfigurationVisitor;
+class ObjectReferenceNode;
+
+class RawTcpSocketNode;
+class HttpTcpSocketNode;
+class Socks5TcpSocketNode;
+class ObfsWebsockTcpSocketNode;
+class WeightBasedSwitchTcpSocketNode;
+
+class RawUdpSocketNode;
+class Socks5UdpSocketNode;
+
+class RawListenerNode;
+class Socks5ListenerNode;
+class ObfsWebsockListenerNode;
+
+class SocksServiceNode;
+class PortForwardingServiceNode;
+
+class ServiceListNode;
+class RootNode;
+
+class ServerConfigurationVisitor
+{
+public:
+	virtual void Visit(ObjectReferenceNode &node) = 0;
+
+	virtual void Visit(RawTcpSocketNode &node) = 0;
+	virtual void Visit(HttpTcpSocketNode &node) = 0;
+	virtual void Visit(Socks5TcpSocketNode &node) = 0;
+	virtual void Visit(ObfsWebsockTcpSocketNode &node) = 0;
+	virtual void Visit(WeightBasedSwitchTcpSocketNode &node) = 0;
+
+	virtual void Visit(RawUdpSocketNode &node) = 0;
+	virtual void Visit(Socks5UdpSocketNode &node) = 0;
+
+	virtual void Visit(RawListenerNode &node) = 0;
+	virtual void Visit(Socks5ListenerNode &node) = 0;
+	virtual void Visit(ObfsWebsockListenerNode &node) = 0;
+
+	virtual void Visit(SocksServiceNode &node) = 0;
+	virtual void Visit(PortForwardingServiceNode &node) = 0;
+
+	virtual void Visit(ServiceListNode &node) = 0;
+	virtual void Visit(RootNode &node) = 0;
+};
 
 class ServerConfigurationNode
 {

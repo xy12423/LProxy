@@ -19,14 +19,13 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #include "pch.h"
 #include "ProxyServer.h"
-#include "Socks4Session.h"
-#include "Socks5Session.h"
-#include "AcceptorManager.h"
+#include "ProxyService.h"
+#include "ProxySession.h"
 
 std::recursive_mutex logMutex;
 
-ProxyServer::ProxyServer(asio::io_context &ioContext, const endpoint &acceptorLocalEp)
-	:ioContext_(ioContext), acceptorLocalEp_(acceptorLocalEp), acceptorRetryTimer_(ioContext)
+ProxyServer::ProxyServer(asio::io_context &ioContext)
+	:ioContext_(ioContext)
 {
 }
 
@@ -36,21 +35,20 @@ ProxyServer::~ProxyServer()
 
 void ProxyServer::Start()
 {
+	std::lock_guard<std::recursive_mutex> lock(serverMutex_);
 	stopping_ = false;
-	InitAcceptor(acceptorID_);
+	services_ = ConstructAllServices();
+	for (const auto &service : services_)
+		service->Start();
 }
 
 void ProxyServer::Stop()
 {
 	if (stopping_.exchange(true))
 		return;
-	std::lock_guard<std::recursive_mutex> lockSessions(sessionsMutex_);
-	std::lock_guard<std::recursive_mutex> lockAcceptor(acceptorMutex_);
-
-	boost::system::error_code ec;
-	acceptorRetryTimer_.cancel(ec);
-	error_code err;
-	acceptor_->close(err);
+	std::lock_guard<std::recursive_mutex> lock(serverMutex_);
+	for (const auto &service : services_)
+		service->Stop();
 	for (const auto &p : sessions_)
 	{
 		auto sess = p.second.lock();
@@ -61,7 +59,7 @@ void ProxyServer::Stop()
 
 void ProxyServer::BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession> &&sessWeak)
 {
-	std::lock_guard<std::recursive_mutex> lock(sessionsMutex_);
+	std::lock_guard<std::recursive_mutex> lock(serverMutex_);
 	if (stopping_)
 		return;
 
@@ -73,7 +71,7 @@ void ProxyServer::BeginSession(ProxySession *sessPtr, std::weak_ptr<ProxySession
 
 void ProxyServer::EndSession(ProxySession *sess)
 {
-	std::lock_guard<std::recursive_mutex> lock(sessionsMutex_);
+	std::lock_guard<std::recursive_mutex> lock(serverMutex_);
 
 	std::lock_guard<std::recursive_mutex> lock2(logMutex);
 	std::cout << "End ";
@@ -93,133 +91,9 @@ void ProxyServer::PrintSession(const ProxySession &sess)
 
 void ProxyServer::PrintSessions()
 {
-	std::lock_guard<std::recursive_mutex> lock(sessionsMutex_);
+	std::lock_guard<std::recursive_mutex> lock(serverMutex_);
 
 	for (const auto &weakSession : sessions_)
 		if (auto session = weakSession.second.lock())
 			PrintSession(*session);
-}
-
-void ProxyServer::StartAccept()
-{
-	std::unique_lock<std::recursive_mutex> lock(acceptorMutex_);
-	std::shared_ptr<prx_listener> acceptor = acceptor_;
-	uint32_t acceptorID = acceptorID_;
-	lock.unlock();
-	for (int i = ParallelAccept(); i > 0; --i)
-	{
-		Accept(acceptor, acceptorID);
-	}
-}
-
-void ProxyServer::Accept(const std::shared_ptr<prx_listener> &acceptor, uint32_t acceptorID)
-{
-	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
-	if (stopping_)
-		return;
-
-	if (!acceptor)
-	{
-		InitAcceptor(acceptorID);
-		return;
-	}
-	acceptor->async_accept([this, acceptor, acceptorID](error_code err, std::unique_ptr<prx_tcp_socket> &&socketPtr)
-	{
-		if (err)
-		{
-			InitAcceptor(acceptorID);
-			return;
-		}
-
-		prx_tcp_socket &socket = *socketPtr;
-		std::shared_ptr<std::unique_ptr<prx_tcp_socket>> sharedSocketPtr = std::make_shared<std::unique_ptr<prx_tcp_socket>>(std::move(socketPtr));
-		socket.async_recv([this, sharedSocketPtr = std::move(sharedSocketPtr)](error_code err, const_buffer data, buffer_data_store_holder &&dataHolder)
-		{
-			if (err)
-				return;
-			if (data.size() < 1)
-				return;
-
-			switch (data.data()[0])
-			{
-			case byte{ 4 }:
-			{
-				auto session = std::make_shared<Socks4Session>(*this, std::move(*sharedSocketPtr));
-				session->Start(buffer_with_data_store{ data, std::move(dataHolder) });
-				break;
-			}
-			case byte{ 5 }:
-			{
-				auto session = std::make_shared<Socks5Session>(*this, std::move(*sharedSocketPtr));
-				session->Start(buffer_with_data_store{ data, std::move(dataHolder) });
-				break;
-			}
-			}
-		});
-
-		Accept(acceptor, acceptorID);
-	});
-}
-
-void ProxyServer::InitAcceptor(uint32_t failedAcceptorID)
-{
-	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
-	if (stopping_)
-		return;
-	if (failedAcceptorID != acceptorID_) // It's not current acceptor that's failed
-		return;
-
-	uint32_t newAcceptorID = ++acceptorID_;
-	acceptor_ = NewUpstreamAcceptor();
-	acceptorRetrying_ = false;
-	acceptor_->async_open([this, newAcceptorID](error_code err)
-	{
-		if (err)
-		{
-			InitAcceptorFailed(newAcceptorID);
-			return;
-		}
-		acceptor_->async_bind(acceptorLocalEp_,
-			[this, newAcceptorID](error_code err)
-		{
-			if (err)
-			{
-				InitAcceptorFailed(newAcceptorID);
-				return;
-			}
-			acceptor_->async_listen([this, newAcceptorID](error_code err)
-			{
-				if (err)
-				{
-					InitAcceptorFailed(newAcceptorID);
-					return;
-				}
-				StartAccept();
-			});
-		});
-	});
-}
-
-void ProxyServer::InitAcceptorFailed(uint32_t failedAcceptorID)
-{
-	std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
-	if (stopping_)
-		return;
-	if (acceptorRetrying_)
-		return;
-	acceptorRetrying_ = true;
-
-	acceptor_->async_close([this, failedAcceptorID](error_code)
-	{
-		std::lock_guard<std::recursive_mutex> lock(acceptorMutex_);
-		if (stopping_)
-			return;
-
-		acceptorRetryTimer_.expires_after(std::chrono::seconds(5));
-		acceptorRetryTimer_.async_wait([this, failedAcceptorID](const boost::system::error_code &ec)
-		{
-			if (!ec)
-				InitAcceptor(failedAcceptorID);
-		});
-	});
 }

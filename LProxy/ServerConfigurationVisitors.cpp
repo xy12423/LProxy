@@ -18,7 +18,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 */
 
 #include "pch.h"
-#include "ServerConfigurationVisitor.h"
+#include "ServerConfigurationVisitors.h"
 #include "ServerConfigurationNodes.h"
 
 void NameResolvingVisitor::Visit(ObjectReferenceNode &node)
@@ -65,11 +65,11 @@ void NameResolvingVisitor::Visit(ObfsWebsockTcpSocketNode &node)
 
 void NameResolvingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
-	for (auto itr = node.Begin(), itr_end = node.End(); itr != itr_end; ++itr)
+	for (auto &item : node)
 	{
-		itr->node->AcceptVisitor(*this);
+		item.node->AcceptVisitor(*this);
 		if (return_value_ != nullptr)
-			itr->node = return_value_;
+			item.node = return_value_;
 	}
 	return_value_ = nullptr;
 }
@@ -111,6 +111,21 @@ void NameResolvingVisitor::Visit(ObfsWebsockListenerNode &node)
 	node.BaseNode()->AcceptVisitor(*this);
 	if (return_value_ != nullptr)
 		node.SetBaseNode(return_value_);
+	return_value_ = nullptr;
+}
+
+void NameResolvingVisitor::Visit(SocksServiceNode &node)
+{
+	return_value_ = nullptr;
+}
+
+void NameResolvingVisitor::Visit(PortForwardingServiceNode &node)
+{
+	return_value_ = nullptr;
+}
+
+void NameResolvingVisitor::Visit(ServiceListNode &node)
+{
 	return_value_ = nullptr;
 }
 
@@ -163,8 +178,8 @@ void ValidatingVisitor::Visit(ObfsWebsockTcpSocketNode &node)
 void ValidatingVisitor::Visit(WeightBasedSwitchTcpSocketNode &node)
 {
 	node.Validate();
-	for (auto itr = node.Begin(), itr_end = node.End(); itr != itr_end; ++itr)
-		itr->node->AcceptVisitor(*this);
+	for (const auto &item : node)
+		item.node->AcceptVisitor(*this);
 }
 
 void ValidatingVisitor::Visit(RawUdpSocketNode &node)
@@ -193,6 +208,21 @@ void ValidatingVisitor::Visit(ObfsWebsockListenerNode &node)
 {
 	node.Validate();
 	node.BaseNode()->AcceptVisitor(*this);
+}
+
+void ValidatingVisitor::Visit(SocksServiceNode &node)
+{
+}
+
+void ValidatingVisitor::Visit(PortForwardingServiceNode &node)
+{
+}
+
+void ValidatingVisitor::Visit(ServiceListNode &node)
+{
+	node.Validate();
+	for (auto child : node)
+		child->AcceptVisitor(*this);
 }
 
 void ValidatingVisitor::Visit(RootNode &node)

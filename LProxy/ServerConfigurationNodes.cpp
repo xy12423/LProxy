@@ -19,7 +19,6 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #include "pch.h"
 #include "ServerConfigurationNodes.h"
-#include "ServerConfigurationVisitor.h"
 
 namespace
 {
@@ -329,23 +328,65 @@ std::unique_ptr<prx_listener> ObfsWebsockListenerNode::NewListener()
 	return std::make_unique<obfs_websock_listener>(Base().NewListener(), key_);
 }
 
+ServiceNode::ServiceNode(const endpoint &upstream_endpoint)
+	:upstream_endpoint_(upstream_endpoint)
+{
+}
+
+SocksServiceNode::SocksServiceNode(const endpoint &upstream_endpoint)
+	:ServiceNode(upstream_endpoint)
+{
+}
+
+void SocksServiceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+{
+	visitor.Visit(*this);
+}
+
+PortForwardingServiceNode::PortForwardingServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint)
+	:ServiceNode(upstream_endpoint), downstream_endpoint_(downstream_endpoint)
+{
+}
+
+void PortForwardingServiceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+{
+	visitor.Visit(*this);
+}
+
+ServiceListNode::ServiceListNode(Container &&nodes)
+	:nodes_(std::move(nodes))
+{
+}
+
+void ServiceListNode::Validate() const
+{
+	for (auto p : nodes_)
+		if (dynamic_cast<const ServiceNode *>(p) == nullptr)
+			throw std::invalid_argument("Invalid base");
+}
+
+void ServiceListNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+{
+	visitor.Visit(*this);
+}
+
 RootNode::RootNode(
 	int thread_count,
 	int parallel_accept,
-	const endpoint &upstream_local_endpoint,
 	ServerConfigurationNode *upstream_listener,
 	ServerConfigurationNode *upstream_udp_socket,
 	ServerConfigurationNode *downstream_tcp_socket,
 	ServerConfigurationNode *downstream_udp_socket,
-	ServerConfigurationNode *downstream_listener
+	ServerConfigurationNode *downstream_listener,
+	ServerConfigurationNode *services
 )
 	:thread_count_(thread_count), parallel_accept_(parallel_accept),
-	upstream_local_endpoint_(upstream_local_endpoint),
 	downstream_tcp_socket_(downstream_tcp_socket),
 	upstream_udp_socket_(upstream_udp_socket),
 	downstream_udp_socket_(downstream_udp_socket),
 	upstream_listener_(upstream_listener),
-	downstream_listener_(downstream_listener)
+	downstream_listener_(downstream_listener),
+	services_(services)
 {
 }
 
@@ -368,4 +409,6 @@ void RootNode::Validate() const
 		throw std::invalid_argument("Invalid upstream listener");
 	if (dynamic_cast<const ListenerNode *>(downstream_listener_) == nullptr)
 		throw std::invalid_argument("Invalid downstream listener");
+	if (services_ != nullptr && dynamic_cast<const ServiceListNode *>(services_) == nullptr)
+		throw std::invalid_argument("Invalid port forwarding config");
 }

@@ -19,43 +19,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 #pragma once
 
-class ServerConfigurationNode;
-
-class ObjectReferenceNode;
-
-class RawTcpSocketNode;
-class HttpTcpSocketNode;
-class Socks5TcpSocketNode;
-class ObfsWebsockTcpSocketNode;
-class WeightBasedSwitchTcpSocketNode;
-
-class RawUdpSocketNode;
-class Socks5UdpSocketNode;
-
-class RawListenerNode;
-class Socks5ListenerNode;
-class ObfsWebsockListenerNode;
-class RootNode;
-
-class ServerConfigurationVisitor
-{
-public:
-	virtual void Visit(ObjectReferenceNode &node) = 0;
-
-	virtual void Visit(RawTcpSocketNode &node) = 0;
-	virtual void Visit(HttpTcpSocketNode &node) = 0;
-	virtual void Visit(Socks5TcpSocketNode &node) = 0;
-	virtual void Visit(ObfsWebsockTcpSocketNode &node) = 0;
-	virtual void Visit(WeightBasedSwitchTcpSocketNode &node) = 0;
-
-	virtual void Visit(RawUdpSocketNode &node) = 0;
-	virtual void Visit(Socks5UdpSocketNode &node) = 0;
-
-	virtual void Visit(RawListenerNode &node) = 0;
-	virtual void Visit(Socks5ListenerNode &node) = 0;
-	virtual void Visit(ObfsWebsockListenerNode &node) = 0;
-	virtual void Visit(RootNode &node) = 0;
-};
+#include "ServerConfigurationNode.h"
 
 class NameResolvingVisitor : public ServerConfigurationVisitor
 {
@@ -76,6 +40,11 @@ public:
 	virtual void Visit(RawListenerNode &node) override;
 	virtual void Visit(Socks5ListenerNode &node) override;
 	virtual void Visit(ObfsWebsockListenerNode &node) override;
+
+	virtual void Visit(SocksServiceNode &node) override;
+	virtual void Visit(PortForwardingServiceNode &node) override;
+
+	virtual void Visit(ServiceListNode &node) override;
 	virtual void Visit(RootNode &node) override;
 private:
 	const std::unordered_map<std::string, ServerConfigurationNode *> &named_nodes_;
@@ -99,5 +68,10 @@ public:
 	virtual void Visit(RawListenerNode &node) override;
 	virtual void Visit(Socks5ListenerNode &node) override;
 	virtual void Visit(ObfsWebsockListenerNode &node) override;
+
+	virtual void Visit(SocksServiceNode &node) override;
+	virtual void Visit(PortForwardingServiceNode &node) override;
+
+	virtual void Visit(ServiceListNode &node) override;
 	virtual void Visit(RootNode &node) override;
 };

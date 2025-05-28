@@ -127,8 +127,8 @@ public:
 
 	WeightBasedSwitchTcpSocketNode(Container &&base, Modes mode);
 
-	Iterator Begin() { return base_.begin(); }
-	Iterator End() { return base_.end(); }
+	Iterator begin() { return base_.begin(); }
+	Iterator end() { return base_.end(); }
 
 	void Validate() const;
 
@@ -224,25 +224,72 @@ private:
 	std::vector<byte> key_;
 };
 
+class ServiceNode : public ServerConfigurationNode
+{
+public:
+	ServiceNode(const endpoint &upstream_endpoint);
+
+	const endpoint &UpstreamEndpoint() const { return upstream_endpoint_; }
+private:
+	endpoint upstream_endpoint_;
+};
+
+class SocksServiceNode : public ServiceNode
+{
+public:
+	SocksServiceNode(const endpoint &upstream_endpoint);
+
+	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
+};
+
+class PortForwardingServiceNode : public ServiceNode
+{
+public:
+	PortForwardingServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint);
+
+	const endpoint &DownstreamEndpoint() const { return downstream_endpoint_; }
+
+	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
+private:
+	endpoint downstream_endpoint_;
+};
+
+class ServiceListNode : public ServerConfigurationNode
+{
+public:
+	using Container = std::vector<ServerConfigurationNode *>;
+	using Iterator = Container::iterator;
+
+	ServiceListNode(Container &&nodes);
+
+	Iterator begin() { return nodes_.begin(); }
+	Iterator end() { return nodes_.end(); }
+
+	void Validate() const;
+
+	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
+private:
+	Container nodes_;
+};
+
 class RootNode : public ServerConfigurationNode
 {
 public:
 	RootNode(
 		int thread_count,
 		int parallel_accept,
-		const endpoint &upstream_local_endpoint,
 		ServerConfigurationNode *upstream_listener,
 		ServerConfigurationNode *upstream_udp_socket,
 		ServerConfigurationNode *downstream_tcp_socket,
 		ServerConfigurationNode *downstream_udp_socket,
-		ServerConfigurationNode *downstream_listener
+		ServerConfigurationNode *downstream_listener,
+		ServerConfigurationNode *services
 	);
 
 	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
 
 	int ThreadCount() const { return thread_count_; }
 	int ParallelAccept() const { return parallel_accept_; }
-	const endpoint &UpstreamLocalEndpoint() const { return upstream_local_endpoint_; }
 
 	ServerConfigurationNode *DownstreamTcpSocketNode() { return downstream_tcp_socket_; }
 	void SetDownstreamTcpSocketNode(ServerConfigurationNode *value) { downstream_tcp_socket_ = value; }
@@ -255,9 +302,12 @@ public:
 	ServerConfigurationNode *DownstreamListenerNode() { return downstream_listener_; }
 	void SetDownstreamListenerNode(ServerConfigurationNode *value) { downstream_listener_ = value; }
 
+	ServerConfigurationNode *ServicesNode() { return services_; }
+	void SetServicesNode(ServerConfigurationNode *value) { services_ = value; }
+
 	void Validate() const;
 private:
 	int thread_count_, parallel_accept_;
-	endpoint upstream_local_endpoint_;
 	ServerConfigurationNode *downstream_tcp_socket_, *upstream_udp_socket_, *downstream_udp_socket_, *upstream_listener_, *downstream_listener_;
+	ServerConfigurationNode *services_;
 };

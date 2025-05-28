@@ -30,17 +30,20 @@ public:
 
 	int Workers() const;
 	int ParallelAccept() const;
-	endpoint UpstreamLocalEndpoint() const;
 	std::unique_ptr<prx_udp_socket> NewUpstreamUdpSocket();
 	std::unique_ptr<prx_listener> NewUpstreamListener();
 	std::unique_ptr<prx_tcp_socket> NewDownstreamTcpSocket();
 	std::unique_ptr<prx_udp_socket> NewDownstreamUdpSocket();
 	std::unique_ptr<prx_listener> NewDownstreamListener();
+
+	void VisitAllServices(ServerConfigurationVisitor &visitor);
 private:
 	ServerConfigurationNode *LoadRootNode(const ptree::ptree &args);
 	ServerConfigurationNode *LoadTcpSocketNode(const ptree::ptree &args);
 	ServerConfigurationNode *LoadUdpSocketNode(const ptree::ptree &args);
 	ServerConfigurationNode *LoadListenerNode(const ptree::ptree &args);
+	ServerConfigurationNode *LoadServiceNode(const ptree::ptree &args);
+	ServerConfigurationNode *LoadServiceNodes(const ptree::ptree &args);
 	void AddNamedNode(const std::string &name, ServerConfigurationNode *node);
 
 	endpoint StringToEndpoint(const std::string &str, port_type default_port);
@@ -49,6 +52,6 @@ private:
 	asio::io_context &io_context_;
 	std::vector<std::unique_ptr<ServerConfigurationNode>> nodes_;
 	std::unordered_map<std::string, ServerConfigurationNode *> named_nodes_;
-	NodeFactory tcp_socket_node_factories_, udp_socket_node_factories_, listener_node_factories_;
+	NodeFactory tcp_socket_node_factories_, udp_socket_node_factories_, listener_node_factories_, service_node_factories_;
 	ServerConfigurationNode *root_node_ = nullptr;
 };

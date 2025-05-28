@@ -20,7 +20,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 #include "pch.h"
 #include "ServerConfiguration.h"
 #include "ServerConfigurationNodes.h"
-#include "ServerConfigurationVisitor.h"
+#include "ServerConfigurationVisitors.h"
 
 endpoint ServerConfiguration::StringToEndpoint(const std::string &str, port_type default_port)
 {
@@ -191,6 +191,18 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 					);
 			}
 		}
+	},
+	service_node_factories_{
+		{"socks", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
+			{
+				return std::make_unique<SocksServiceNode>(StringToEndpointWithResolve(args.get<std::string>("listen"), 1080));
+			}
+		},
+		{"port_forward", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
+			{
+				return std::make_unique<PortForwardingServiceNode>(StringToEndpoint(args.get<std::string>("upstream"), 0), StringToEndpoint(args.get<std::string>("downstream"), 0));
+			}
+		},
 	}
 {
 	root_node_ = LoadRootNode(arg_root);
@@ -208,11 +220,6 @@ int ServerConfiguration::Workers() const
 int ServerConfiguration::ParallelAccept() const
 {
 	return static_cast<RootNode *>(root_node_)->ParallelAccept();
-}
-
-endpoint ServerConfiguration::UpstreamLocalEndpoint() const
-{
-	return static_cast<RootNode *>(root_node_)->UpstreamLocalEndpoint();
 }
 
 std::unique_ptr<prx_udp_socket> ServerConfiguration::NewUpstreamUdpSocket()
@@ -240,17 +247,25 @@ std::unique_ptr<prx_listener> ServerConfiguration::NewDownstreamListener()
 	return static_cast<ListenerNode *>(static_cast<RootNode *>(root_node_)->DownstreamListenerNode())->NewListener();
 }
 
+void ServerConfiguration::VisitAllServices(ServerConfigurationVisitor &visitor)
+{
+	for (ServerConfigurationNode *service : *static_cast<ServiceListNode *>(static_cast<RootNode *>(root_node_)->ServicesNode()))
+	{
+		service->AcceptVisitor(visitor);
+	}
+}
+
 ServerConfigurationNode *ServerConfiguration::LoadRootNode(const ptree::ptree &args)
 {
 	std::unique_ptr<RootNode> node = std::make_unique<RootNode>(
 		args.get<int>("workers", 1),
 		args.get<int>("parallelAccept", 1),
-		StringToEndpointWithResolve(args.get<std::string>("listen"), 1080),
 		LoadListenerNode(args.get_child("upstreamAcceptor")),
 		LoadUdpSocketNode(args.get_child("upstreamUdpSocket")),
 		LoadTcpSocketNode(args.get_child("downstreamTcpSocket")),
 		LoadUdpSocketNode(args.get_child("downstreamUdpSocket")),
-		LoadListenerNode(args.get_child("downstreamAcceptor"))
+		LoadListenerNode(args.get_child("downstreamAcceptor")),
+		LoadServiceNodes(args.get_child("services", ptree::ptree()))
 		);
 	ServerConfigurationNode *ptr = node.get();
 	nodes_.push_back(std::move(node));
@@ -308,6 +323,43 @@ ServerConfigurationNode *ServerConfiguration::LoadListenerNode(const ptree::ptre
 	nodes_.push_back(std::move(node));
 	if (args.count("id") > 0)
 		AddNamedNode(args.get<std::string>("id"), node_ptr);
+	return node_ptr;
+}
+
+ServerConfigurationNode *ServerConfiguration::LoadServiceNode(const ptree::ptree &args)
+{
+	std::unique_ptr<ServerConfigurationNode> node;
+	try
+	{
+		node = service_node_factories_.at(args.get<std::string>("type"))(args);
+	}
+	catch (const std::out_of_range &)
+	{
+		throw std::invalid_argument("Invalid service type " + args.get<std::string>("type"));
+	}
+	ServerConfigurationNode *node_ptr = node.get();
+	nodes_.push_back(std::move(node));
+	return node_ptr;
+}
+
+ServerConfigurationNode *ServerConfiguration::LoadServiceNodes(const ptree::ptree &args)
+{
+	std::unique_ptr<ServerConfigurationNode> node;
+	try
+	{
+		ServiceListNode::Container services;
+		for (const auto &node : args)
+		{
+			services.push_back(LoadServiceNode(node.second));
+		}
+		node = std::make_unique<ServiceListNode>(std::move(services));
+	}
+	catch (const std::exception &)
+	{
+		throw std::invalid_argument("Error while parsing service list");
+	}
+	ServerConfigurationNode *node_ptr = node.get();
+	nodes_.push_back(std::move(node));
 	return node_ptr;
 }
 
