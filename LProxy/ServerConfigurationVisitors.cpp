@@ -119,7 +119,7 @@ void NameResolvingVisitor::Visit(SocksServiceNode &node)
 	return_value_ = nullptr;
 }
 
-void NameResolvingVisitor::Visit(PortForwardingServiceNode &node)
+void NameResolvingVisitor::Visit(PortForwardServiceNode &node)
 {
 	return_value_ = nullptr;
 }
@@ -214,7 +214,7 @@ void ValidatingVisitor::Visit(SocksServiceNode &node)
 {
 }
 
-void ValidatingVisitor::Visit(PortForwardingServiceNode &node)
+void ValidatingVisitor::Visit(PortForwardServiceNode &node)
 {
 }
 

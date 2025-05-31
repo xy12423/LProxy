@@ -42,7 +42,7 @@ public:
 	virtual void Visit(ObfsWebsockListenerNode &node) override;
 
 	virtual void Visit(SocksServiceNode &node) override;
-	virtual void Visit(PortForwardingServiceNode &node) override;
+	virtual void Visit(PortForwardServiceNode &node) override;
 
 	virtual void Visit(ServiceListNode &node) override;
 	virtual void Visit(RootNode &node) override;
@@ -70,7 +70,7 @@ public:
 	virtual void Visit(ObfsWebsockListenerNode &node) override;
 
 	virtual void Visit(SocksServiceNode &node) override;
-	virtual void Visit(PortForwardingServiceNode &node) override;
+	virtual void Visit(PortForwardServiceNode &node) override;
 
 	virtual void Visit(ServiceListNode &node) override;
 	virtual void Visit(RootNode &node) override;

@@ -20,6 +20,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 #include "pch.h"
 #include "ProxyServer.h"
 #include "SocksService.h"
+#include "PortForwardService.h"
 #include "AcceptorManager.h"
 #include "ServerConfiguration.h"
 #include "ServerConfigurationNodes.h"
@@ -109,7 +110,7 @@ public:
 			virtual void Visit(ObfsWebsockListenerNode &node) override {}
 
 			virtual void Visit(SocksServiceNode &node) override { results_.emplace_back(std::make_shared<SocksService>(*self_, self_->ioContext_, node.UpstreamEndpoint())); }
-			virtual void Visit(PortForwardingServiceNode &node) override {}
+			virtual void Visit(PortForwardServiceNode &node) override { results_.emplace_back(std::make_shared<PortForwardService>(*self_, self_->ioContext_, node.UpstreamEndpoint(), node.DownstreamEndpoint())); }
 
 			virtual void Visit(ServiceListNode &node) override {}
 			virtual void Visit(RootNode &node) override {}

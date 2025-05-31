@@ -35,7 +35,7 @@ class Socks5ListenerNode;
 class ObfsWebsockListenerNode;
 
 class SocksServiceNode;
-class PortForwardingServiceNode;
+class PortForwardServiceNode;
 
 class ServiceListNode;
 class RootNode;
@@ -59,7 +59,7 @@ public:
 	virtual void Visit(ObfsWebsockListenerNode &node) = 0;
 
 	virtual void Visit(SocksServiceNode &node) = 0;
-	virtual void Visit(PortForwardingServiceNode &node) = 0;
+	virtual void Visit(PortForwardServiceNode &node) = 0;
 
 	virtual void Visit(ServiceListNode &node) = 0;
 	virtual void Visit(RootNode &node) = 0;

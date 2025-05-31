@@ -343,12 +343,12 @@ void SocksServiceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 	visitor.Visit(*this);
 }
 
-PortForwardingServiceNode::PortForwardingServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint)
+PortForwardServiceNode::PortForwardServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint)
 	:ServiceNode(upstream_endpoint), downstream_endpoint_(downstream_endpoint)
 {
 }
 
-void PortForwardingServiceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
+void PortForwardServiceNode::AcceptVisitor(ServerConfigurationVisitor &visitor)
 {
 	visitor.Visit(*this);
 }

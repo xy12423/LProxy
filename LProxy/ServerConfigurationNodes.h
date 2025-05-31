@@ -242,10 +242,10 @@ public:
 	virtual void AcceptVisitor(ServerConfigurationVisitor &visitor) override;
 };
 
-class PortForwardingServiceNode : public ServiceNode
+class PortForwardServiceNode : public ServiceNode
 {
 public:
-	PortForwardingServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint);
+	PortForwardServiceNode(const endpoint &upstream_endpoint, const endpoint &downstream_endpoint);
 
 	const endpoint &DownstreamEndpoint() const { return downstream_endpoint_; }
 

@@ -200,7 +200,7 @@ ServerConfiguration::ServerConfiguration(asio::io_context &io_context, const ptr
 		},
 		{"port_forward", [this](const ptree::ptree &args)->std::unique_ptr<ServerConfigurationNode>
 			{
-				return std::make_unique<PortForwardingServiceNode>(StringToEndpoint(args.get<std::string>("upstream"), 0), StringToEndpoint(args.get<std::string>("downstream"), 0));
+				return std::make_unique<PortForwardServiceNode>(StringToEndpoint(args.get<std::string>("upstream"), 0), StringToEndpoint(args.get<std::string>("downstream"), 0));
 			}
 		},
 	}
