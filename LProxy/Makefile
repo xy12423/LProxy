@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -c -pthread -I ~/libprxsocket -std=c++17 -DBOOST_BIND_GLOBAL_PLACEHOLDERS -fsanitize=address
+CXXFLAGS = -c -pthread -I ~/libprxsocket -std=c++17 -DBOOST_BIND_GLOBAL_PLACEHOLDERS
 LFLAGS = -pthread -L ~/libprxsocket/libprxsocket -fsanitize=address -lprxsocket -lboost_system -lcrypto -lssl
 
 ifeq ($(RELEASE), 1)

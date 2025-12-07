@@ -27,27 +27,49 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 
 extern std::recursive_mutex logMutex;
 
-void ltrim(std::string& str)
+namespace
 {
-	if (str.empty())
-		return;
-	const char *itr = str.data(), *itrBegin = itr, *itrEnd = str.data() + str.size();
-	for (; itr != itrEnd; ++itr)
-		if (!isspace((uint8_t)*itr))
-			break;
-	str.erase(0, itr - itrBegin);
-}
+	void ltrim(std::string &str)
+	{
+		if (str.empty())
+			return;
+		const char *itr = str.data(), *itrBegin = itr, *itrEnd = str.data() + str.size();
+		for (; itr != itrEnd; ++itr)
+			if (!isspace((uint8_t)*itr))
+				break;
+		str.erase(0, itr - itrBegin);
+	}
 
-void rtrim(std::string& str)
-{
-	while (!str.empty() && isspace((uint8_t)str.back()))
-		str.pop_back();
-}
+	void rtrim(std::string &str)
+	{
+		while (!str.empty() && isspace((uint8_t)str.back()))
+			str.pop_back();
+	}
 
-void trim(std::string& str)
-{
-	ltrim(str);
-	rtrim(str);
+	void trim(std::string &str)
+	{
+		ltrim(str);
+		rtrim(str);
+	}
+
+	void PrintPropertyTree(const ptree::ptree &node, int level = 0)
+	{
+		for (const auto &val : node)
+		{
+			for (int i = 0; i < level; ++i)
+				std::cout << ' ';
+			std::cout << val.first << ": " << val.second.get_value("") << std::endl;
+			if (!val.second.empty())
+				PrintPropertyTree(val.second, level + 1);
+		}
+	}
+
+	std::atomic_bool terminal_signal_received{ false };
+	static_assert(decltype(terminal_signal_received)::is_always_lock_free);
+	void TerminateSignalHandler(int signal)
+	{
+		terminal_signal_received = true;
+	}
 }
 
 class ConfigurableServer : public ProxyServer
@@ -132,25 +154,22 @@ private:
 	std::shared_ptr<ServerConfiguration> configuration_;
 };
 
-void PrintPropertyTree(const ptree::ptree &node, int level = 0)
-{
-	for (const auto &val : node)
-	{
-		for (int i = 0; i < level; ++i)
-			std::cout << ' ';
-		std::cout << val.first << ": " << val.second.get_value("") << std::endl;
-		if (!val.second.empty())
-			PrintPropertyTree(val.second, level + 1);
-	}
-}
-
 int main(int argc, char *argv[])
 {
-	std::string configPath;
-	if (argc >= 2)
-		configPath = argv[1];
-	else
-		configPath = "config.json";
+	std::string config_path = "config.json";
+	bool is_daemon = false;
+	for (int i = 1; i < argc; ++i)
+	{
+		if (std::string_view(argv[i]) == std::string_view("--daemon"))
+		{
+			is_daemon = true;
+		}
+		else if (argv[i] != nullptr && argv[i][0] != '-')
+		{
+			config_path = argv[i];
+			break;
+		}
+	}
 
 	asio::io_context iosrv;
 	asio::executor_work_guard<asio::io_context::executor_type> iosrv_work = boost::asio::make_work_guard(iosrv);
@@ -174,7 +193,7 @@ int main(int argc, char *argv[])
 	worker_threads.emplace_back(worker_function); //First worker thread
 
 	ptree::ptree root;
-	ptree::read_json(configPath.c_str(), root);
+	ptree::read_json(config_path.c_str(), root);
 	//PrintPropertyTree(root);
 
 	std::shared_ptr<ServerConfiguration> conf;
@@ -199,47 +218,62 @@ int main(int argc, char *argv[])
 	server = std::make_unique<ConfigurableServer>(iosrv, conf);
 	server->Start();
 
-	std::string cmd, arg;
-	while (true)
+	if (is_daemon)
 	{
-		std::getline(std::cin, cmd);
-		arg.clear();
+		if (signal(SIGTERM, TerminateSignalHandler) == SIG_ERR)
+		{
+			std::cerr << "Failed to install signal handler" << std::endl;
+		}
+		else
+		{
+			while (!terminal_signal_received)
+				std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+	}
+	else
+	{
+		std::string cmd, arg;
+		while (true)
+		{
+			std::getline(std::cin, cmd);
+			arg.clear();
 
-		trim(cmd);
-		size_t pos = cmd.find(' ');
-		if (pos != cmd.npos)
-		{
-			arg.assign(cmd, pos + 1);
-			cmd.erase(pos);
-			ltrim(arg);
-			rtrim(cmd);
-		}
-
-		if (cmd == "exit")
-		{
-			break;
-		}
-		else if (cmd == "list")
-		{
-			server->PrintSessions();
-		}
-		else if (cmd == "reload")
-		{
-			try
+			trim(cmd);
+			size_t pos = cmd.find(' ');
+			if (pos != cmd.npos)
 			{
-				root.clear();
-				if (!arg.empty())
-					ptree::read_json(arg.c_str(), root);
-				else
-					ptree::read_json(configPath.c_str(), root);
-
-				conf = std::make_shared<ServerConfiguration>(iosrv, root);
-				server->SetConfiguration(conf);
+				arg.assign(cmd, pos + 1);
+				cmd.erase(pos);
+				ltrim(arg);
+				rtrim(cmd);
 			}
-			catch (const std::exception &ex)
+
+			if (cmd == "exit")
 			{
-				std::lock_guard<std::recursive_mutex> lock(logMutex);
-				std::cerr << ex.what() << std::endl;
+				break;
+			}
+			else if (cmd == "list")
+			{
+				server->PrintSessions();
+			}
+			else if (cmd == "reload")
+			{
+				try
+				{
+					root.clear();
+					if (!arg.empty())
+						ptree::read_json(arg.c_str(), root);
+					else
+						ptree::read_json(config_path.c_str(), root);
+
+					conf = std::make_shared<ServerConfiguration>(iosrv, root);
+					server->SetConfiguration(conf);
+				}
+				catch (const std::exception &ex)
+				{
+					std::lock_guard<std::recursive_mutex> lock(logMutex);
+					std::cerr << ex.what() << std::endl;
+				}
 			}
 		}
 	}

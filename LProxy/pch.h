@@ -29,6 +29,7 @@ along with LProxy. If not, see <https://www.gnu.org/licenses/>.
 #include <climits>
 #include <cstdlib>
 #include <ctime>
+#include <csignal>
 
 #include <iostream>
 #include <fstream>
